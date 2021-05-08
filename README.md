@@ -12,3 +12,8 @@ The instructions will appear when the program starts running, but briefly, there
   - *Price* request, which returns the latest price at which a trade occured, or helpful messages that informs the user that the market either doesn't exist, or that no trades have occured yet.
   - *Current market view* request, which shows the current buy and sell orders in the market as tables.
   - *History* requests, which shows all the past trades that were filled in the market.
+
+## Demo
+In this demo, 3 `buy` orders are placed and subsequently sorted by price, then 4 `sell` orders are placed. Some of these `sell` orders consume existing buy orders and then disappear, others consume buy orders and then remain on the market.
+
+![Demo gif](./media/edit-exchange.gif)
