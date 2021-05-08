@@ -343,8 +343,6 @@ impl Exchange {
             // Update the market and then the statistics.
             match self.fill_existing_orders(&mut order) {
                 Some(mut orders) => {
-                    println!("The order just placed filled the following orders:");
-
                     for ord in &orders {
                         println!("Order ({}) filled order ({}) at ${}. Exchanged {} shares.", ord.filled_by, ord.id, ord.price, ord.exchanged);
                     }
@@ -353,7 +351,7 @@ impl Exchange {
                     self.extend_past_orders(&mut orders);
                 },
                 None => {
-                    println!("The order has been added to the market.");
+                    println!("Order ({}) has been added to the market.", order.order_id);
                 }
             }
 
@@ -405,6 +403,60 @@ impl Exchange {
             // Since this is the first order, initialize the stats for this security.
             self.init_stats(order);
         }
+    }
+
+    /* Allows a user to simulate a market.
+     *
+     * Pre-conditions:
+     *  - The market must exist.
+     *  - Market must have a set price, i.e a trade must have occured.
+     *  - There must be at least 1 order on the market.
+     *
+     * TODO
+     * If these preconditions are not met, we will return an error.
+     * Otherwise, we return the number of trades that took place.
+     * */
+    pub fn simulate_market(&mut self, sim: &Simulation) -> Result<i32, ()> {
+
+        match self.get_price(&sim.symbol) {
+            Ok(_) => (),
+            Err(_) => {
+                return Err(()); // TODO better error handling
+            }
+        };
+
+        // Simulation loop
+        for _time_step in 0..sim.duration {
+            // We want to randomly decide to buy or sell,
+            // then perform a random walk from the current price, exchanging within
+            // say 1 standard deviation of the mean # of shares per trade.
+            let rand: f64 = random!(); // quick 0.0 ~ 1.0 generation
+            let mut action: String = String::new();
+
+            if rand < 0.5 {
+                action.push_str("buy");
+            } else {
+                action.push_str("sell");
+            }
+
+            let mut current_price = 0.0;
+            if let Ok(p) = self.get_price(&sim.symbol) {
+                current_price = p;
+            };
+
+            // Deviate from the current price
+            let price_deviation: i8 = random!(-5..=5); // Deviation of +/- 5%
+            let new_price = current_price + current_price * (price_deviation as f64 / 100.0);
+
+            // Chose the number of shares
+            let shares:i32 = random!(2..=13); // TODO: get random number of shares
+
+            // Create the order and send it to the market
+            let order = Order::from(action, sim.symbol.clone(), shares, new_price);
+            self.add_order_to_security(order)
+        }
+
+        return Ok(0);
     }
 }
 
@@ -537,6 +589,9 @@ pub struct Order {
 
 impl Order {
     pub fn from(action: String, security: String, quantity: i32, price: f64) -> Order {
+        // Truncate price to 2 decimal places
+        let price = f64::trunc(price  * 100.0) / 100.0;
+
         Order {
             action,
             security,
@@ -603,8 +658,26 @@ impl InfoRequest {
     }
 }
 
+// Allows us to perform simulations on our market
+pub struct Simulation {
+    pub action: String,
+    pub symbol: String,
+    pub duration: u32
+}
+
+impl Simulation {
+    pub fn from(action: String, symbol: String, duration: u32) -> Self {
+        Simulation {
+            action,
+            symbol,
+            duration
+        }
+    }
+}
+
 // Possible requests from a user
 pub enum Request {
     OrderReq(Order),
     InfoReq(InfoRequest),
+    SimReq(Simulation)
 }

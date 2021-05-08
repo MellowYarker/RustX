@@ -1,4 +1,4 @@
-pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Request, PriceError};
+pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
 
 /* Prints some helpful information to the console when input is malformed. */
 fn malformed_req(req: &String) {
@@ -64,6 +64,24 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 }
             }
         },
+        // Simulate a market for n time steps
+        "simulate" => {
+            match words.len() {
+                3 => {
+                    let req: Simulation = Simulation::from( words[0].to_string(),
+                                                            words[1].to_string().to_uppercase(),
+                                                            words[2].to_string().trim()
+                                                                                .parse::<u32>()
+                                                                                .expect("Please enter an integer number of time steps!"));
+                    return Ok(Request::SimReq(req));
+                },
+                _ => {
+                    println!("Malformed \"{}\" request!", words[0]);
+                    println!("Hint - format shoudl be: {} symbol timesteps", words[0]);
+                    return Err(());
+                }
+            }
+        },
         // request instructions
         "help" => {
             let buy_price = 167.34;
@@ -98,7 +116,6 @@ pub fn service_request(request: Request, exchange: &mut Exchange) {
                 "buy" | "sell" => {
                     // Put the order on the market, it might get filled immediately,
                     // if not it will sit on the market until another order fills it.
-                    // exchange::add_order_to_security(order.clone(), exchange);
                     &exchange.add_order_to_security(order.clone());
                     &exchange.show_market(&order.security);
                 },
@@ -143,6 +160,30 @@ pub fn service_request(request: Request, exchange: &mut Exchange) {
                 },
                 _ => {
                     println!("I don't know how to handle this information request.");
+                }
+            }
+        },
+        Request::SimReq(req) => {
+            match &req.action[..] {
+                "simulate" => {
+                    // We have to satisfy the preconditions of the simulation function.
+                    let price = exchange.get_price(&req.symbol);
+                    match price {
+                        Ok(_) => {
+                            &exchange.simulate_market(&req);
+                        },
+                        Err(e) => match e {
+                            PriceError::NoMarket => {
+                                println!("There is no market for ${}, so we cannot simulate it.", req.symbol);
+                            },
+                            PriceError::NoTrades => {
+                                println!("This market has not executed any trades. Since there is no price information, we cannot simulate it!");
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    println!("I don't know how to handle this Simulation request.");
                 }
             }
         }
