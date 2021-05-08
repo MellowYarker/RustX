@@ -16,6 +16,8 @@ The instructions will appear when the program starts running, but briefly, there
   - Format:`simulate symbol num_trades`.
   - There is a 50% chance of buying, 50% chance of selling. The price of each order deviates +/- 5% from the last traded price, and the number of shares is randomly chosen from a short range.
 
+If you don't want to use the interactive version of the program, you can write a simple text file with one request per line, then pass the file as a command line argument `cargo run /path/to/input.txt`.
+
 ## Technical Details
 <strike>Basically no effort has gone to performance, but I measured about 1.5 min for 1 million orders (no print statements). I suspect most of the runtime is spent moving elements in the buy/sell vectors, and that using BSTs here would result in far better performance (we insert/remove the front of a large vector *very frequently*).</strike>
 
