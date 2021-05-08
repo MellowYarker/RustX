@@ -15,10 +15,14 @@ fn main() {
      | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/  / /_/ /_/ /  / _, _/ /_/ (__  ) /_/   |
      |__/|__/\\___/_/\\___/\\____/_/ /_/ /_/\\___/   \\__/\\____/  /_/ |_|\\__,_/____/\\__/_/|_|\n");
 
+    let buy_price = 167.34;
+    let buy_amount = 24;
+    let sell_price = 999.85;
+    let sell_amount = 12;
     println!("Usage:");
     println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
-    println!("\t\tEx: BUY GME 69 420.69\t<---- Sends a buy order for 69 shares of GME at $420.69 a share.");
-    println!("\t\tEx: SELL GME 3 1000.0\t<---- Sends a sell order for 3 shares of GME at $1000 a share.\n");
+    println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
+    println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
     println!("\tInfo Requests: ACTION SYMBOL(ticker)");
     println!("\t\tEx: price GME\t<---- gives latest price an order was filled at.");
     println!("\t\tEx: show GME\t<---- shows statistics for the GME market.");
