@@ -89,15 +89,18 @@ impl Exchange {
 
         // Loop until no more orders can be filled.
         loop {
-            // No more sell orders to fill, or the buy order was filled.
-            if market.sell_orders.len() == 0 || (highest_bid.quantity == highest_bid.filled) {
+            // The new buy order was filled.
+            if highest_bid.quantity == highest_bid.filled {
                 break;
             }
 
             // We try to fill the lowest sell
-            // Unlike in fill_sell_order, we do not remove this element since it would
-            // necessitate a move of all other elements one index to the left (expensive).
-            let lowest_offer = &market.sell_orders[0];
+            // Recall that the sell vector is sorted in descending order,
+            // so the lowest offer is at the end.
+            let lowest_offer = match market.sell_orders.pop() { // May potentially add back to vector if not filled.
+                Some(bid) => bid,
+                None => return new_price // No more sell orders to fill
+            };
 
             let lowest_sell_remaining = lowest_offer.quantity - lowest_offer.filled;
             let highest_bid_remaining = highest_bid.quantity - highest_bid.filled;
@@ -116,9 +119,6 @@ impl Exchange {
                     update_lowest.filled += amount_traded;
 
                     highest_bid.filled += amount_traded;
-
-                    // Remove order from sell vector as it has been filled.
-                    market.sell_orders.remove(0);
 
                     // Since the sell has been filled, add it to the new vector.
                     filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
@@ -144,13 +144,12 @@ impl Exchange {
                     // TODO: Do we really want to do this in this way?
                     filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
 
-                    // Update the lowest offer.
-                    market.sell_orders.remove(0);
-                    market.sell_orders.insert(0, update_lowest);
-
+                    // Put the updated lowest offer back on the market
+                    market.sell_orders.push(update_lowest);
                 }
             } else {
                 // Highest buy doesn't reach lowest sell.
+                market.sell_orders.push(lowest_offer); // Put the lowest sell back
                 break;
             }
         }
@@ -290,21 +289,22 @@ impl Exchange {
     pub fn show_market(&self, symbol: &String) {
         let market = self.live_orders.get(symbol).expect("NO VALUE");
         println!("\nMarket: ${}", symbol);
-        println!("\t--BUYS--");
-        println!("\t\t| ID | Price \t| Quantity | Filled |");
-        println!("\t\t-------------------------------------");
-        for order in &market.buy_orders {
-            println!("\t\t| {}\t${}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
-        }
-        println!("\t\t-------------------------------------\n");
-
         println!("\t--SELLS--");
         println!("\t\t| ID | Price \t| Quantity | Filled |");
         println!("\t\t-------------------------------------");
         for order in &market.sell_orders {
-            println!("\t\t| {}\t${}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
+            println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
         }
         println!("\t\t-------------------------------------\n");
+
+        println!("\t--BUYS--");
+        println!("\t\t| ID | Price \t| Quantity | Filled |");
+        println!("\t\t-------------------------------------");
+        for order in market.buy_orders.iter().rev() {
+            println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
+        }
+        println!("\t\t-------------------------------------\n");
+
         let market = self.statistics.get(symbol).expect("NO VALUE");
         println!("STATS");
         println!("\t{:?}", market);
@@ -319,7 +319,7 @@ impl Exchange {
         println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
         println!("\t\t------------------------------------------------------");
         for past_order in market {
-            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${}   |", past_order.filled_by, past_order.id, past_order.exchanged, past_order.price);
+            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filled_by, past_order.id, past_order.exchanged, past_order.price);
         }
         println!("\t\t------------------------------------------------------\n");
     }
@@ -343,6 +343,7 @@ impl Exchange {
             // Update the market and then the statistics.
             match self.fill_existing_orders(&mut order) {
                 Some(mut orders) => {
+                    // TEST SPEED
                     for ord in &orders {
                         println!("Order ({}) filled order ({}) at ${}. Exchanged {} shares.", ord.filled_by, ord.id, ord.price, ord.exchanged);
                     }
@@ -351,6 +352,7 @@ impl Exchange {
                     self.extend_past_orders(&mut orders);
                 },
                 None => {
+                    // TEST SPEED
                     println!("Order ({}) has been added to the market.", order.order_id);
                 }
             }
@@ -360,23 +362,36 @@ impl Exchange {
 
                 let entry = self.live_orders.get_mut(&order.security).unwrap();
 
-                let market_order_vec = match &action[..] {
-                    "buy" => &mut entry.buy_orders,
-                    _ => &mut entry.sell_orders, // only other possibility is sell
-                };
-
-                // We order by price primarily
-                match market_order_vec.binary_search(&order) {
-                    Ok(pos) => {
-                        // TODO: We should insert this in a way such that it is filled after the
-                        // other orders with the same price that were placed first!
-                        market_order_vec.insert(pos, order.clone());
+                match &action[..] {
+                    "buy" => {
+                        match entry.buy_orders.binary_search(&order) {
+                            Ok(pos) => {
+                                // TODO: We should insert this in a way such that it is filled after the
+                                // other orders with the same price that were placed first!
+                                entry.buy_orders.insert(pos, order.clone());
+                            },
+                            Err(pos) => {
+                                entry.buy_orders.insert(pos, order.clone());
+                            }
+                        }
                     },
-                    Err(pos) => {
-                        market_order_vec.insert(pos, order.clone());
-                    }
+                    "sell" => {
+                        // Keep in mind that the sell vector is reversed!
+                        match entry.sell_orders.binary_search_by(|y| y.cmp (&order).reverse()) {
+                            Ok(pos) => {
+                                // TODO: We should insert this in a way such that it is filled after the
+                                // other orders with the same price that were placed first!
+                                entry.sell_orders.insert(pos, order.clone());
+                            },
+                            Err(pos) => {
+                                entry.sell_orders.insert(pos, order.clone());
+                            }
+                        }
+                    },
+                    _ => ()
                 }
             } else {
+                // TEST SPEED
                 println!("The order has been filled!");
             }
 
