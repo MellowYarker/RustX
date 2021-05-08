@@ -26,9 +26,10 @@ fn main() {
     println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
     println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
     println!("\tInfo Requests: ACTION SYMBOL(ticker)");
-    println!("\t\tEx: price GME\t<---- gives latest price an order was filled at.");
-    println!("\t\tEx: show GME\t<---- shows statistics for the GME market.");
-    println!("\t\tEx: history GME\t<---- shows past orders that were filled in the GME market.\n");
+    println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
+    println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
+    println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.");
+    println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
     println!("\tYou can see these instructions at any point by typing help.");
 
 
