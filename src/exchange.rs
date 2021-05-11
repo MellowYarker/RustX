@@ -38,7 +38,7 @@ impl Exchange {
     fn init_stats(&mut self, order: Order) {
         let stat = SecStat::from(order);
         self.statistics.insert(stat.symbol.clone(), stat);
-        self.total_orders = 1;
+        self.total_orders += 1;
     }
 
     // Update the stats for a market given the new order.
@@ -363,16 +363,16 @@ impl Exchange {
             match self.fill_existing_orders(&mut order) {
                 Some(mut orders) => {
                     // TEST SPEED
-                    // for ord in &orders {
-                    //     println!("Order ({}) filled order ({}) at ${}. Exchanged {} shares.", ord.filled_by, ord.id, ord.price, ord.exchanged);
-                    // }
+                    for ord in &orders {
+                        println!("Order ({}) filled order ({}) at ${}. Exchanged {} shares.", ord.filled_by, ord.id, ord.price, ord.exchanged);
+                    }
 
                     // Move the recently filled orders into the filled_orders array
                     self.extend_past_orders(&mut orders);
                 },
                 None => {
                     // TEST SPEED
-                    // println!("Order ({}) has been added to the market.", order.order_id);
+                    println!("Order ({}) has been added to the market.", order.order_id);
                 }
             }
 
@@ -384,60 +384,36 @@ impl Exchange {
                 match &action[..] {
                     "buy" => {
                         entry.buy_orders.push(order.clone());
-                        // match entry.buy_orders.binary_search(&order) {
-                        //     Ok(pos) => {
-                        //         // TODO: We should insert this in a way such that it is filled after the
-                        //         // other orders with the same price that were placed first!
-                        //         entry.buy_orders.insert(pos, order.clone());
-                        //     },
-                        //     Err(pos) => {
-                        //         entry.buy_orders.insert(pos, order.clone());
-                        //     }
-                        // }
                     },
                     "sell" => {
+                        // Sell is a min heap so we reverse the comparison
                         entry.sell_orders.push(Reverse(order.clone()));
-                        // Keep in mind that the sell vector is reversed!
-                        // match entry.sell_orders.binary_search_by(|y| y.cmp (&order).reverse()) {
-                        //     Ok(pos) => {
-                        //         // TODO: We should insert this in a way such that it is filled after the
-                        //         // other orders with the same price that were placed first!
-                        //         entry.sell_orders.insert(pos, order.clone());
-                        //     },
-                        //     Err(pos) => {
-                        //         entry.sell_orders.insert(pos, order.clone());
-                        //     }
-                        // }
                     },
                     _ => ()
                 }
             } else {
                 // TEST SPEED
-                // println!("The order has been filled!");
+                println!("The order has been filled!");
             }
 
             // Update the stats because a new order has been placed.
             self.update_stats(order.clone());
         } else {
             // Entry doesn't exist, create it.
-            // let mut buy_vec : Vec<Order> = Vec::new();
-            // let mut sell_vec: Vec<Order> = Vec::new();
+            // buy is a max heap, sell is a min heap.
             let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
             let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
             match &action[..] {
                 "buy" => {
-                    // buy_vec.push(order.clone());
                     buy_heap.push(order.clone());
                 },
                 "sell" => {
-                    // sell_vec.push(order.clone());
                     sell_heap.push(Reverse(order.clone()));
                 },
                 // We can never get here.
                 _ => ()
             };
 
-            // let new_market = Market::new(buy_vec, sell_vec);
             let new_market = Market::new(buy_heap, sell_heap);
             self.live_orders.insert(order.security.clone(), new_market);
 
