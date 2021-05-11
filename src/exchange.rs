@@ -1,5 +1,9 @@
 use std::collections::{HashMap};
 use std::cmp::Ordering;
+use std::cmp::Reverse;
+
+// Use heaps instead of vecs for orders.
+use std::collections::BinaryHeap;
 
 // Error types for price information.
 pub enum PriceError {
@@ -34,7 +38,7 @@ impl Exchange {
     fn init_stats(&mut self, order: Order) {
         let stat = SecStat::from(order);
         self.statistics.insert(stat.symbol.clone(), stat);
-        self.total_orders = 1;
+        self.total_orders += 1;
     }
 
     // Update the stats for a market given the new order.
@@ -98,7 +102,7 @@ impl Exchange {
             // Recall that the sell vector is sorted in descending order,
             // so the lowest offer is at the end.
             let lowest_offer = match market.sell_orders.pop() { // May potentially add back to vector if not filled.
-                Some(bid) => bid,
+                Some(bid) => bid.0,
                 None => return new_price // No more sell orders to fill
             };
 
@@ -145,11 +149,11 @@ impl Exchange {
                     filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
 
                     // Put the updated lowest offer back on the market
-                    market.sell_orders.push(update_lowest);
+                    market.sell_orders.push(Reverse(update_lowest));
                 }
             } else {
                 // Highest buy doesn't reach lowest sell.
-                market.sell_orders.push(lowest_offer); // Put the lowest sell back
+                market.sell_orders.push(Reverse(lowest_offer)); // Put the lowest sell back
                 break;
             }
         }
@@ -292,16 +296,31 @@ impl Exchange {
         println!("\t--SELLS--");
         println!("\t\t| ID | Price \t| Quantity | Filled |");
         println!("\t\t-------------------------------------");
-        for order in &market.sell_orders {
+        let sells = market.sell_orders.clone().into_sorted_vec();
+        // for order in &market.sell_orders {
+        let mut order_count = 0;
+        for result in &sells {
+            let order = &result.0;
+            order_count += 1;
             println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
+            if order_count == 10 {
+                break
+            }
         }
         println!("\t\t-------------------------------------\n");
 
         println!("\t--BUYS--");
         println!("\t\t| ID | Price \t| Quantity | Filled |");
         println!("\t\t-------------------------------------");
-        for order in market.buy_orders.iter().rev() {
+        let buys = market.buy_orders.clone().into_sorted_vec();
+        // // for order in market.buy_orders.iter().rev() {
+        order_count = 0;
+        for order in buys.iter().rev() {
+            order_count += 1;
             println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
+            if order_count == 10 {
+                break
+            }
         }
         println!("\t\t-------------------------------------\n");
 
@@ -364,29 +383,11 @@ impl Exchange {
 
                 match &action[..] {
                     "buy" => {
-                        match entry.buy_orders.binary_search(&order) {
-                            Ok(pos) => {
-                                // TODO: We should insert this in a way such that it is filled after the
-                                // other orders with the same price that were placed first!
-                                entry.buy_orders.insert(pos, order.clone());
-                            },
-                            Err(pos) => {
-                                entry.buy_orders.insert(pos, order.clone());
-                            }
-                        }
+                        entry.buy_orders.push(order.clone());
                     },
                     "sell" => {
-                        // Keep in mind that the sell vector is reversed!
-                        match entry.sell_orders.binary_search_by(|y| y.cmp (&order).reverse()) {
-                            Ok(pos) => {
-                                // TODO: We should insert this in a way such that it is filled after the
-                                // other orders with the same price that were placed first!
-                                entry.sell_orders.insert(pos, order.clone());
-                            },
-                            Err(pos) => {
-                                entry.sell_orders.insert(pos, order.clone());
-                            }
-                        }
+                        // Sell is a min heap so we reverse the comparison
+                        entry.sell_orders.push(Reverse(order.clone()));
                     },
                     _ => ()
                 }
@@ -399,20 +400,21 @@ impl Exchange {
             self.update_stats(order.clone());
         } else {
             // Entry doesn't exist, create it.
-            let mut buy_vec : Vec<Order> = Vec::new();
-            let mut sell_vec: Vec<Order> = Vec::new();
+            // buy is a max heap, sell is a min heap.
+            let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
+            let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
             match &action[..] {
                 "buy" => {
-                    buy_vec.push(order.clone());
+                    buy_heap.push(order.clone());
                 },
                 "sell" => {
-                    sell_vec.push(order.clone());
+                    sell_heap.push(Reverse(order.clone()));
                 },
                 // We can never get here.
                 _ => ()
             };
 
-            let new_market = Market::new(buy_vec, sell_vec);
+            let new_market = Market::new(buy_heap, sell_heap);
             self.live_orders.insert(order.security.clone(), new_market);
 
             // Since this is the first order, initialize the stats for this security.
@@ -479,12 +481,12 @@ impl Exchange {
 // TODO: Do we want orders stored in a sorted binary tree instead?
 #[derive(Debug)]
 pub struct Market {
-    pub buy_orders: Vec<Order>,
-    pub sell_orders: Vec<Order>
+    pub buy_orders: BinaryHeap<Order>,
+    pub sell_orders: BinaryHeap<Reverse<Order>>
 }
 
 impl Market {
-    pub fn new(buy: Vec<Order>, sell: Vec<Order>) -> Self {
+    pub fn new(buy: BinaryHeap<Order>, sell: BinaryHeap<Reverse<Order>>) -> Self {
         Market {
             buy_orders: buy,
             sell_orders: sell
