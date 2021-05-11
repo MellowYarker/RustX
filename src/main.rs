@@ -26,6 +26,7 @@ fn main() {
         for line in reader.lines() {
             match line {
                 Ok(input) => {
+                    let keep = input.clone();
                     let request: Request = match tokenize_input(input) {
                         // Ok(req) => req,
                         Ok(req) => {
@@ -39,6 +40,7 @@ fn main() {
 
                     // Our input has been validated, and we can now
                     // attempt to service the request.
+                    println!("Request: {}", keep);
                     service_request(request, &mut exchange);
                 },
                 Err(_) => return
