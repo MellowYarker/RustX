@@ -1,7 +1,6 @@
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
-
 pub mod requests;
 pub use crate::exchange::requests::{Order, InfoRequest, Request, Simulation};
 
@@ -10,6 +9,9 @@ pub use crate::exchange::filled::FilledOrder;
 
 pub mod stats;
 pub use crate::exchange::stats::SecStat;
+
+pub mod market;
+pub use crate::exchange::market::Market;
 
 // Error types for price information.
 pub enum PriceError {
@@ -48,7 +50,8 @@ impl Exchange {
     }
 
     // Update the stats for a market given the new order.
-    fn update_stats(&mut self, order: Order) {
+    // We modify total buys/sells, total order, as well as potentially price and filled orders.
+    fn update_state(&mut self, order: &Order, executed_trades: Option<Vec<FilledOrder>>) {
         let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
 
         // Update the counters and the price
@@ -61,6 +64,15 @@ impl Exchange {
             },
             _ => ()
         }
+
+        // Update the price and filled orders if a trade occurred.
+        // if let Some(price) = new_price {
+        if let Some(mut filled_orders) = executed_trades {
+            let price = filled_orders[filled_orders.len() - 1].price;
+            stats.update_price(price);
+            stats.update_filled_orders(&filled_orders);
+            self.extend_past_orders(&mut filled_orders);
+        };
         self.total_orders += 1;
     }
 
@@ -87,163 +99,7 @@ impl Exchange {
         }
     }
 
-    /* Given a buy order, try to fill it with existing sell orders in the market.
-     * Add any orders that are completely filled into the filled_orders vector.
-     *
-     * Returns the lowest sell price that was filled or None if no trade occured.
-     */
-    fn fill_buy_order(highest_bid: &mut Order, market: &mut Market, filled_orders: &mut Vec<FilledOrder>) -> Option<f64> {
-
-        // No trades by default
-        let mut new_price = None;
-
-        // Loop until no more orders can be filled.
-        loop {
-            // The new buy order was filled.
-            if highest_bid.quantity == highest_bid.filled {
-                break;
-            }
-
-            // We try to fill the lowest sell
-            // Recall that the sell vector is sorted in descending order,
-            // so the lowest offer is at the end.
-            let lowest_offer = match market.sell_orders.pop() { // May potentially add back to vector if not filled.
-                Some(bid) => bid.0,
-                None => return new_price // No more sell orders to fill
-            };
-
-            let lowest_sell_remaining = lowest_offer.quantity - lowest_offer.filled;
-            let highest_bid_remaining = highest_bid.quantity - highest_bid.filled;
-
-            if lowest_offer.price <= highest_bid.price {
-
-                // Update the price
-                new_price = Some(lowest_offer.price);
-
-                // If more shares are being bought than sold
-                if lowest_sell_remaining <= highest_bid_remaining {
-                    let amount_traded = lowest_sell_remaining;
-
-                    // Update the orders
-                    let mut update_lowest = lowest_offer.clone();
-                    update_lowest.filled += amount_traded;
-
-                    highest_bid.filled += amount_traded;
-
-                    // Since the sell has been filled, add it to the new vector.
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
-
-                    // If the newly placed order was consumed
-                    /*
-                    if lowest_sell_remaining == highest_bid_remaining {
-                        // TODO: Do we really want to do this in this way?
-                        // filled_orders.push(highest_bid.clone());
-                        filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &update_lowest, amount_traded));
-                    }
-                    */
-                } else {
-                    // The buy order was completely filled.
-                    let amount_traded = highest_bid_remaining;
-
-                    let mut update_lowest = lowest_offer.clone();
-                    update_lowest.filled += amount_traded;
-
-                    highest_bid.filled  += amount_traded;
-
-                    // Newly placed order was filled
-                    // TODO: Do we really want to do this in this way?
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
-
-                    // Put the updated lowest offer back on the market
-                    market.sell_orders.push(Reverse(update_lowest));
-                }
-            } else {
-                // Highest buy doesn't reach lowest sell.
-                market.sell_orders.push(Reverse(lowest_offer)); // Put the lowest sell back
-                break;
-            }
-        }
-
-        return new_price;
-    }
-
-    /* Given a sell order, try to fill it with existing buy orders in the market.
-     * Add any orders that are completely filled into the filled_orders vector.
-     *
-     * Returns the highest buy price that was filled or None if no trade occured.
-    */
-    fn fill_sell_order(lowest_offer: &mut Order, market: &mut Market, filled_orders: &mut Vec<FilledOrder>) -> Option<f64> {
-        // No trades by default
-        let mut new_price = None;
-
-        // Loop until no more orders can be filled.
-        loop {
-            // The new sell order was filled.
-            if lowest_offer.quantity == lowest_offer.filled {
-                break;
-            }
-
-            // We try to fill the highest buy
-            let highest_bid = match market.buy_orders.pop() { // May potentially add back to vector if not filled.
-                Some(bid) => bid,
-                None => return new_price // No more buy orders to fill
-            };
-
-            let lowest_sell_remaining = lowest_offer.quantity - lowest_offer.filled;
-            let highest_bid_remaining = highest_bid.quantity - highest_bid.filled;
-
-            if lowest_offer.price <= highest_bid.price {
-
-                // Update the price
-                new_price = Some(highest_bid.price);
-
-                // If more shares are being sold than bought
-                if highest_bid_remaining <= lowest_sell_remaining {
-                    let amount_traded = highest_bid_remaining;
-
-                    // Update the orders
-                    let mut update_highest = highest_bid.clone();
-                    update_highest.filled += amount_traded;
-
-                    lowest_offer.filled += amount_traded;
-
-                    // Add the updated buy to the Vector we return
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_highest, &lowest_offer, amount_traded));
-
-                    /*
-                    // If the newly placed order was consumed
-                    if lowest_sell_remaining == highest_bid_remaining {
-                        // TODO: Do we really want to do this in this way?
-                        filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer, &update_highest, amount_traded));
-                    }
-                    */
-                } else {
-                    // The sell order was completely filled.
-                    let amount_traded = lowest_sell_remaining;
-
-                    let mut update_highest = highest_bid.clone();
-                    update_highest.filled += amount_traded;
-
-                    lowest_offer.filled += amount_traded;
-
-                    // Newly placed order was filled
-                    // TODO: Do we really want to do this in this way?
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_highest, &lowest_offer, amount_traded));
-
-                    // Update the highest bid.
-                    market.buy_orders.push(update_highest);
-
-                }
-            } else {
-                // Lowest sell doesn't reach highest buy.
-                market.buy_orders.push(highest_bid); // Put the highest bid back.
-                break;
-            }
-        }
-
-        return new_price
-    }
-
+    /*
     // When we get a new order, we will try to fill it with
     // existing orders on the market. If the order is successfully filled,
     // at least in part, we will update the order's `filled` field, as well
@@ -264,27 +120,25 @@ impl Exchange {
         match &order.action[..] {
             // New buy order, try to fill some existing sells
             "buy" => {
-                new_price = Exchange::fill_buy_order(order, market, &mut filled_orders);
+                new_price = market.fill_buy_order(order, &mut filled_orders);
             },
             // New sell order, try to fill some existing buys
             "sell" => {
-                new_price = Exchange::fill_sell_order(order, market, &mut filled_orders);
+                new_price = market.fill_sell_order(order, &mut filled_orders);
             },
             _ => () // Not possible
         }
 
-        // Update the market's price if it changed
+        // Update the market stats as the state has changed.
         match new_price {
             // Price change means orders were filled
-            Some(price) => {
-                let stats = self.statistics.get_mut(&order.security).expect("ERROR: Symbol doesn't exist.");
-                stats.update_price(price);
-                stats.update_filled_orders(&filled_orders);
+            Some(_) => {
                 return Some(filled_orders);
             },
             None => return None
         }
     }
+    */
 
     // Extends the past orders vector
     fn extend_past_orders(&mut self, new_orders: &mut Vec<FilledOrder>) {
@@ -356,75 +210,65 @@ impl Exchange {
     */
     pub fn add_order_to_security(&mut self, order: Order) {
 
-        let action = order.action.clone();
+        let action = &order.action.clone()[..];
 
         let mut order: Order = order;
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
 
         // Try to access the security in the HashMap
-        if self.live_orders.contains_key(&order.security) {
+        match self.live_orders.get_mut(&order.security) {
+        // if self.live_orders.contains_key(&order.security) {
 
-            // Update the market and then the statistics.
-            match self.fill_existing_orders(&mut order) {
-                Some(mut orders) => {
-                    // TEST SPEED
-                    for ord in &orders {
-                        println!("Order ({}) filled order ({}) at ${}. Exchanged {} shares.", ord.filled_by, ord.id, ord.price, ord.exchanged);
+            Some(market) => {
+                // Try to fill the new order with existing orders on the market.
+                // let filled_orders = self.fill_existing_orders(&mut order);
+                let filled_orders = market.fill_existing_orders(&mut order);
+
+                // Add the new order to the buy/sell vec if it wasn't completely filled
+                if order.quantity != order.filled {
+
+                    let entry = self.live_orders.get_mut(&order.security).unwrap();
+                    match action {
+                        "buy" => {
+                            entry.buy_orders.push(order.clone());
+                        },
+                        "sell" => {
+                            // Sell is a min heap so we reverse the comparison
+                            entry.sell_orders.push(Reverse(order.clone()));
+                        },
+                        _ => ()
                     }
-
-                    // Move the recently filled orders into the filled_orders array
-                    self.extend_past_orders(&mut orders);
-                },
-                None => {
+                } else {
                     // TEST SPEED
-                    println!("Order ({}) has been added to the market.", order.order_id);
+                    // println!("The order has been filled!");
                 }
-            }
+                self.update_state(&order, filled_orders);
+            },
+            None => {
 
-            // Add the new order to the buy/sell vec if it wasn't completely filled
-            if order.quantity != order.filled {
-
-                let entry = self.live_orders.get_mut(&order.security).unwrap();
-
-                match &action[..] {
+        // } else {
+                // Entry doesn't exist, create it.
+                // buy is a max heap, sell is a min heap.
+                let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
+                let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+                match action {
                     "buy" => {
-                        entry.buy_orders.push(order.clone());
+                        buy_heap.push(order.clone());
                     },
                     "sell" => {
-                        // Sell is a min heap so we reverse the comparison
-                        entry.sell_orders.push(Reverse(order.clone()));
+                        sell_heap.push(Reverse(order.clone()));
                     },
+                    // We can never get here.
                     _ => ()
-                }
-            } else {
-                // TEST SPEED
-                println!("The order has been filled!");
+                };
+
+                let new_market = Market::new(buy_heap, sell_heap);
+                self.live_orders.insert(order.security.clone(), new_market);
+
+                // Since this is the first order, initialize the stats for this security.
+                self.init_stats(order);
             }
-
-            // Update the stats because a new order has been placed.
-            self.update_stats(order.clone());
-        } else {
-            // Entry doesn't exist, create it.
-            // buy is a max heap, sell is a min heap.
-            let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
-            let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
-            match &action[..] {
-                "buy" => {
-                    buy_heap.push(order.clone());
-                },
-                "sell" => {
-                    sell_heap.push(Reverse(order.clone()));
-                },
-                // We can never get here.
-                _ => ()
-            };
-
-            let new_market = Market::new(buy_heap, sell_heap);
-            self.live_orders.insert(order.security.clone(), new_market);
-
-            // Since this is the first order, initialize the stats for this security.
-            self.init_stats(order);
         }
     }
 
@@ -480,22 +324,5 @@ impl Exchange {
         }
 
         return Ok(0);
-    }
-}
-
-// The market for a security
-// TODO: Do we want orders stored in a sorted binary tree instead?
-#[derive(Debug)]
-pub struct Market {
-    pub buy_orders: BinaryHeap<Order>,
-    pub sell_orders: BinaryHeap<Reverse<Order>>
-}
-
-impl Market {
-    pub fn new(buy: BinaryHeap<Order>, sell: BinaryHeap<Reverse<Order>>) -> Self {
-        Market {
-            buy_orders: buy,
-            sell_orders: sell
-        }
     }
 }
