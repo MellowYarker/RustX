@@ -99,47 +99,6 @@ impl Exchange {
         }
     }
 
-    /*
-    // When we get a new order, we will try to fill it with
-    // existing orders on the market. If the order is successfully filled,
-    // at least in part, we will update the order's `filled` field, as well
-    // as the existing orders it fills.
-    //
-    // On success, we return a vector of all orders we filled (at least in part),
-    // which should then be added to the past orders vector for this market by the
-    // caller function.
-    //
-    // On failure, we return None.
-    fn fill_existing_orders(&mut self, order: &mut Order) -> Option<Vec<FilledOrder>> {
-        let market = self.live_orders.get_mut(&order.security).expect("Symbol does not exist.");
-
-        // We will populate this if any orders get filled.
-        let mut filled_orders: Vec<FilledOrder> = Vec::new();
-
-        let mut new_price = None;
-        match &order.action[..] {
-            // New buy order, try to fill some existing sells
-            "buy" => {
-                new_price = market.fill_buy_order(order, &mut filled_orders);
-            },
-            // New sell order, try to fill some existing buys
-            "sell" => {
-                new_price = market.fill_sell_order(order, &mut filled_orders);
-            },
-            _ => () // Not possible
-        }
-
-        // Update the market stats as the state has changed.
-        match new_price {
-            // Price change means orders were filled
-            Some(_) => {
-                return Some(filled_orders);
-            },
-            None => return None
-        }
-    }
-    */
-
     // Extends the past orders vector
     fn extend_past_orders(&mut self, new_orders: &mut Vec<FilledOrder>) {
 
@@ -209,7 +168,7 @@ impl Exchange {
 
      TODO: Failure condition? Different return type?
     */
-    pub fn add_order_to_security(&mut self, order: Order) {
+    pub fn submit_order_to_market(&mut self, order: Order) {
 
         let action = &order.action.clone()[..];
 
@@ -219,11 +178,9 @@ impl Exchange {
 
         // Try to access the security in the HashMap
         match self.live_orders.get_mut(&order.security) {
-        // if self.live_orders.contains_key(&order.security) {
 
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                // let filled_orders = self.fill_existing_orders(&mut order);
                 let filled_orders = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell vec if it wasn't completely filled
@@ -247,7 +204,6 @@ impl Exchange {
                 self.update_state(&order, filled_orders);
             },
             None => {
-        // } else {
                 // Entry doesn't exist, create it.
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
@@ -320,7 +276,7 @@ impl Exchange {
 
             // Create the order and send it to the market
             let order = Order::from(action, sim.symbol.clone(), shares, new_price);
-            self.add_order_to_security(order)
+            self.submit_order_to_market(order)
         }
 
         return Ok(0);

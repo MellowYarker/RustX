@@ -117,7 +117,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange) {
                 "buy" | "sell" => {
                     // Put the order on the market, it might get filled immediately,
                     // if not it will sit on the market until another order fills it.
-                    &exchange.add_order_to_security(order.clone());
+                    &exchange.submit_order_to_market(order.clone());
                     &exchange.show_market(&order.security);
                 },
                 // Handle unknown action!
