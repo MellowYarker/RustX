@@ -49,9 +49,12 @@ impl Exchange {
         self.total_orders += 1;
     }
 
-    // Update the stats for a market given the new order.
-    // We modify total buys/sells, total order, as well as potentially price and filled orders.
-    fn update_state(&mut self, order: &Order, executed_trades: Option<Vec<FilledOrder>>) {
+    /* Update the stats for a market given the new order.
+     * We modify total buys/sells, total order, as well as potentially price and filled orders.
+     *
+     * Returns Some(price) if trade occured, or None.
+     */
+    fn update_state(&mut self, order: &Order, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
         let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
 
         // Update the counters and the price
@@ -65,15 +68,19 @@ impl Exchange {
             _ => ()
         }
 
+        let mut new_price = None;
+
         // Update the price and filled orders if a trade occurred.
-        // if let Some(price) = new_price {
         if let Some(mut filled_orders) = executed_trades {
             let price = filled_orders[filled_orders.len() - 1].price;
+            new_price = Some(price);
             stats.update_price(price);
             stats.update_filled_orders(&filled_orders);
             self.extend_past_orders(&mut filled_orders);
         };
+
         self.total_orders += 1;
+        return new_price;
     }
 
     /* Returns the price of the given symbol, or one of two errors.
@@ -164,15 +171,16 @@ impl Exchange {
     }
 
     /* Add an order to the security's order list.
-     If the security isn't in the HashMap, create it.
-     Returns a reference to the order on success.
-
-     TODO: Failure condition? Different return type?
+     * If the security isn't in the HashMap, create it.
+     *
+     * Returns Some(price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, order: Order) {
+    pub fn submit_order_to_market(&mut self, order: Order) -> Option<f64> {
 
         let action = &order.action.clone()[..];
         let mut order: Order = order;
+
+        let mut new_price = None; // new price if trade occurs
 
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
@@ -200,7 +208,7 @@ impl Exchange {
                     // println!("The order has been filled!");
                 }
                 // Update the state of the exchange.
-                self.update_state(&order, filled_orders);
+                new_price = self.update_state(&order, filled_orders);
             },
             None => {
                 // Entry doesn't exist, create it.
@@ -225,6 +233,8 @@ impl Exchange {
                 self.init_stats(&order);
             }
         }
+
+        return new_price;
     }
 
     /* Allows a user to simulate a market.
@@ -240,31 +250,34 @@ impl Exchange {
      * */
     pub fn simulate_market(&mut self, sim: &Simulation) -> Result<i32, ()> {
 
+        let mut current_price = 0.0;
+
         match self.get_price(&sim.symbol) {
-            Ok(_) => (),
+            Ok(p) => {
+                current_price = p;
+            },
             Err(_) => {
                 return Err(()); // TODO better error handling
             }
         };
+
+        let buy = String::from("buy");
+        let sell = String::from("sell");
+
+        let mut action: &String;
 
         // Simulation loop
         for _time_step in 0..sim.duration {
             // We want to randomly decide to buy or sell,
             // then perform a random walk from the current price, exchanging within
             // say 1 standard deviation of the mean # of shares per trade.
+
             let rand: f64 = random!(); // quick 0.0 ~ 1.0 generation
-            let mut action: String = String::new();
-
             if rand < 0.5 {
-                action.push_str("buy");
+                action = &buy;
             } else {
-                action.push_str("sell");
+                action = &sell;
             }
-
-            let mut current_price = 0.0;
-            if let Ok(p) = self.get_price(&sim.symbol) {
-                current_price = p;
-            };
 
             // Deviate from the current price
             let price_deviation: i8 = random!(-5..=5); // Deviation of +/- 5%
@@ -274,8 +287,13 @@ impl Exchange {
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
             // Create the order and send it to the market
-            let order = Order::from(action, sim.symbol.clone(), shares, new_price);
-            self.submit_order_to_market(order)
+            let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price);
+
+            // Update price here instead of calling get_price, since that requires
+            // unnecessary HashMap lookup.
+            if let Some(p) = self.submit_order_to_market(order) {
+                current_price = p;
+            }
         }
 
         return Ok(0);
