@@ -162,6 +162,7 @@ impl Exchange {
         }
         println!("\t\t------------------------------------------------------\n");
     }
+
     /* Add an order to the security's order list.
      If the security isn't in the HashMap, create it.
      Returns a reference to the order on success.

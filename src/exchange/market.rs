@@ -1,8 +1,8 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use crate::exchange::{Order, FilledOrder};
+
 // The market for a security
-// TODO: Do we want orders stored in a sorted binary tree instead?
 #[derive(Debug)]
 pub struct Market {
     pub buy_orders: BinaryHeap<Order>,
@@ -185,8 +185,6 @@ impl Market {
     //
     // On failure, we return None.
     pub fn fill_existing_orders(&mut self, order: &mut Order) -> Option<Vec<FilledOrder>> {
-        // let market = self.live_orders.get_mut(&order.security).expect("Symbol does not exist.");
-
         // We will populate this if any orders get filled.
         let mut filled_orders: Vec<FilledOrder> = Vec::new();
 

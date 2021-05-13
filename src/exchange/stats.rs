@@ -26,7 +26,6 @@ impl SecStat {
             _ => 0
         };
 
-        // let last_price = order.price;
         let last_price = None;
 
         SecStat {
