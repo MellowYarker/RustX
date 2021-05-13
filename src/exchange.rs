@@ -177,7 +177,6 @@ impl Exchange {
     */
     pub fn submit_order_to_market(&mut self, order: Order) -> Option<f64> {
 
-        let action = &order.action.clone()[..];
         let mut order: Order = order;
 
         let mut new_price = None; // new price if trade occurs
@@ -193,7 +192,7 @@ impl Exchange {
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled
                 if order.quantity != order.filled {
-                    match action {
+                    match &order.action[..] {
                         "buy" => {
                             market.buy_orders.push(order.clone());
                         },
@@ -215,7 +214,7 @@ impl Exchange {
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                 let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
-                match action {
+                match &order.action[..] {
                     "buy" => {
                         buy_heap.push(order.clone());
                     },
