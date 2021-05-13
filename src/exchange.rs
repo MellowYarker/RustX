@@ -43,7 +43,7 @@ impl Exchange {
     }
 
     // Initializes the stats for a market given the first order.
-    fn init_stats(&mut self, order: Order) {
+    fn init_stats(&mut self, order: &Order) {
         let stat = SecStat::from(order);
         self.statistics.insert(stat.symbol.clone(), stat);
         self.total_orders += 1;
@@ -171,29 +171,26 @@ impl Exchange {
     pub fn submit_order_to_market(&mut self, order: Order) {
 
         let action = &order.action.clone()[..];
-
         let mut order: Order = order;
+
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
 
         // Try to access the security in the HashMap
         match self.live_orders.get_mut(&order.security) {
-
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
                 let filled_orders = market.fill_existing_orders(&mut order);
 
-                // Add the new order to the buy/sell vec if it wasn't completely filled
+                // Add the new order to the buy/sell heap if it wasn't completely filled
                 if order.quantity != order.filled {
-
-                    let entry = self.live_orders.get_mut(&order.security).unwrap();
                     match action {
                         "buy" => {
-                            entry.buy_orders.push(order.clone());
+                            market.buy_orders.push(order.clone());
                         },
                         "sell" => {
                             // Sell is a min heap so we reverse the comparison
-                            entry.sell_orders.push(Reverse(order.clone()));
+                            market.sell_orders.push(Reverse(order.clone()));
                         },
                         _ => ()
                     }
@@ -201,6 +198,7 @@ impl Exchange {
                     // TEST SPEED
                     // println!("The order has been filled!");
                 }
+                // Update the state of the exchange.
                 self.update_state(&order, filled_orders);
             },
             None => {
@@ -223,7 +221,7 @@ impl Exchange {
                 self.live_orders.insert(order.security.clone(), new_market);
 
                 // Since this is the first order, initialize the stats for this security.
-                self.init_stats(order);
+                self.init_stats(&order);
             }
         }
     }

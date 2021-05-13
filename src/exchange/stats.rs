@@ -12,7 +12,7 @@ pub struct SecStat {
 }
 
 impl SecStat {
-    pub fn from(order: Order) -> Self {
+    pub fn from(order: &Order) -> Self {
 
         let symbol = order.security.clone();
 
