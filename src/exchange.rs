@@ -292,20 +292,21 @@ impl Exchange {
     // Print a market
     pub fn show_market(&self, symbol: &String) {
         let market = self.live_orders.get(symbol).expect("NO VALUE");
+        let num_orders_to_view = 10;
+
         println!("\nMarket: ${}", symbol);
+
         println!("\t--SELLS--");
         println!("\t\t| ID | Price \t| Quantity | Filled |");
         println!("\t\t-------------------------------------");
+
         let sells = market.sell_orders.clone().into_sorted_vec();
-        // for order in &market.sell_orders {
-        let mut order_count = 0;
-        for result in &sells {
+        let start = std::cmp::min(sells.len(), num_orders_to_view);
+        let lowest_sells = &sells[sells.len() - start ..];
+
+        for result in lowest_sells.iter() {
             let order = &result.0;
-            order_count += 1;
             println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
-            if order_count == 10 {
-                break
-            }
         }
         println!("\t\t-------------------------------------\n");
 
@@ -313,16 +314,16 @@ impl Exchange {
         println!("\t\t| ID | Price \t| Quantity | Filled |");
         println!("\t\t-------------------------------------");
         let buys = market.buy_orders.clone().into_sorted_vec();
-        // // for order in market.buy_orders.iter().rev() {
-        order_count = 0;
+        let mut order_count = 0;
         for order in buys.iter().rev() {
             order_count += 1;
             println!("\t\t| {}\t${:.2}\t     {}\t  \t{}   |", order.order_id, order.price, order.quantity, order.filled);
-            if order_count == 10 {
+            if order_count == num_orders_to_view {
                 break
             }
         }
         println!("\t\t-------------------------------------\n");
+
 
         let market = self.statistics.get(symbol).expect("NO VALUE");
         println!("STATS");
@@ -359,6 +360,8 @@ impl Exchange {
         // Try to access the security in the HashMap
         if self.live_orders.contains_key(&order.security) {
 
+            println!("{:?}", order);
+
             // Update the market and then the statistics.
             match self.fill_existing_orders(&mut order) {
                 Some(mut orders) => {
@@ -375,6 +378,7 @@ impl Exchange {
                     println!("Order ({}) has been added to the market.", order.order_id);
                 }
             }
+            println!("{:?}", order);
 
             // Add the new order to the buy/sell vec if it wasn't completely filled
             if order.quantity != order.filled {
