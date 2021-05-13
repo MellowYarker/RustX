@@ -315,7 +315,7 @@ impl Exchange {
             let price_deviation: i8 = random!(-5..=5); // Deviation of +/- 5%
             let new_price = current_price + current_price * (price_deviation as f64 / 100.0);
 
-            // Chose the number of shares
+            // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
             // Create the order and send it to the market
