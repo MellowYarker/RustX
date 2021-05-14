@@ -35,10 +35,9 @@ impl Market {
             }
 
             // We try to fill the lowest sell
-            // Recall that the sell vector is sorted in descending order,
-            // so the lowest offer is at the end.
-            let lowest_offer = match self.sell_orders.pop() { // May potentially add back to vector if not filled.
-                Some(bid) => bid.0,
+            // peek is less expensive than pop
+            let lowest_offer = match self.sell_orders.peek() {
+                Some(bid) => bid.0.clone(),
                 None => return new_price // No more sell orders to fill
             };
 
@@ -55,16 +54,16 @@ impl Market {
                     let amount_traded = lowest_sell_remaining;
 
                     // Update the orders
-                    let mut update_lowest = lowest_offer.clone();
-                    update_lowest.filled += amount_traded;
+                    let mut lowest_offer = self.sell_orders.pop().unwrap();
+                    lowest_offer.0.filled += amount_traded;
 
+                    // Add this trade
                     highest_bid.filled += amount_traded;
-
-                    // Since the sell has been filled, add it to the new vector.
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
+                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0.clone(), &highest_bid, amount_traded));
 
                     // If the newly placed order was consumed
                     /*
+                    // Since the sell has been filled, add it to the new vector.
                     if lowest_sell_remaining == highest_bid_remaining {
                         // TODO: Do we really want to do this in this way?
                         // filled_orders.push(highest_bid.clone());
@@ -75,21 +74,16 @@ impl Market {
                     // The buy order was completely filled.
                     let amount_traded = highest_bid_remaining;
 
-                    let mut update_lowest = lowest_offer.clone();
-                    update_lowest.filled += amount_traded;
-
-                    highest_bid.filled  += amount_traded;
+                    // Update the lowest offer
+                    let mut lowest_offer = self.sell_orders.peek_mut().unwrap();
+                    lowest_offer.0.filled += amount_traded;
 
                     // Newly placed order was filled
-                    // TODO: Do we really want to do this in this way?
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_lowest, &highest_bid, amount_traded));
-
-                    // Put the updated lowest offer back on the market
-                    self.sell_orders.push(Reverse(update_lowest));
+                    highest_bid.filled += amount_traded;
+                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0.clone(), &highest_bid, amount_traded));
                 }
             } else {
                 // Highest buy doesn't reach lowest sell.
-                self.sell_orders.push(Reverse(lowest_offer)); // Put the lowest sell back
                 break;
             }
         }
@@ -114,7 +108,8 @@ impl Market {
             }
 
             // We try to fill the highest buy
-            let highest_bid = match self.buy_orders.pop() { // May potentially add back to vector if not filled.
+            // peek is less expensive than pop.
+            let highest_bid = match self.buy_orders.peek() {
                 Some(bid) => bid,
                 None => return new_price // No more buy orders to fill
             };
@@ -132,13 +127,13 @@ impl Market {
                     let amount_traded = highest_bid_remaining;
 
                     // Update the orders
-                    let mut update_highest = highest_bid.clone();
-                    update_highest.filled += amount_traded;
+                    let mut highest_bid = self.buy_orders.pop().unwrap();
+                    highest_bid.filled += amount_traded;
 
                     lowest_offer.filled += amount_traded;
 
                     // Add the updated buy to the Vector we return
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_highest, &lowest_offer, amount_traded));
+                    filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &lowest_offer, amount_traded));
 
                     /*
                     // If the newly placed order was consumed
@@ -151,22 +146,16 @@ impl Market {
                     // The sell order was completely filled.
                     let amount_traded = lowest_sell_remaining;
 
-                    let mut update_highest = highest_bid.clone();
-                    update_highest.filled += amount_traded;
-
-                    lowest_offer.filled += amount_traded;
+                    // Update the highest bid.
+                    let mut highest_bid = self.buy_orders.peek_mut().unwrap();
+                    highest_bid.filled += amount_traded;
 
                     // Newly placed order was filled
-                    // TODO: Do we really want to do this in this way?
-                    filled_orders.push(FilledOrder::order_to_filled_order(&update_highest, &lowest_offer, amount_traded));
-
-                    // Update the highest bid.
-                    self.buy_orders.push(update_highest);
-
+                    lowest_offer.filled += amount_traded;
+                    filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &lowest_offer, amount_traded));
                 }
             } else {
                 // Lowest sell doesn't reach highest buy.
-                self.buy_orders.push(highest_bid); // Put the highest bid back.
                 break;
             }
         }
