@@ -37,7 +37,7 @@ impl Market {
             // We try to fill the lowest sell
             // peek is less expensive than pop
             let lowest_offer = match self.sell_orders.peek() {
-                Some(bid) => bid.0.clone(),
+                Some(bid) => &bid.0,
                 None => return new_price // No more sell orders to fill
             };
 
@@ -59,7 +59,7 @@ impl Market {
 
                     // Add this trade
                     highest_bid.filled += amount_traded;
-                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0.clone(), &highest_bid, amount_traded));
+                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0, &highest_bid, amount_traded));
 
                     // If the newly placed order was consumed
                     /*
@@ -75,12 +75,12 @@ impl Market {
                     let amount_traded = highest_bid_remaining;
 
                     // Update the lowest offer
-                    let mut lowest_offer = self.sell_orders.peek_mut().unwrap();
-                    lowest_offer.0.filled += amount_traded;
+                    let mut lowest_offer = &mut (self.sell_orders.peek_mut().unwrap().0);
+                    lowest_offer.filled += amount_traded;
 
                     // Newly placed order was filled
                     highest_bid.filled += amount_traded;
-                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0.clone(), &highest_bid, amount_traded));
+                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer, &highest_bid, amount_traded));
                 }
             } else {
                 // Highest buy doesn't reach lowest sell.
