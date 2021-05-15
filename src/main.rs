@@ -3,7 +3,7 @@
 pub mod exchange;
 pub mod parser;
 
-pub use crate::exchange::{Exchange, Market, Order, InfoRequest, Request};
+pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::parser::{tokenize_input, service_request};
 
 use std::io::{self, prelude::*, BufReader};
