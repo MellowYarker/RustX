@@ -77,7 +77,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 },
                 _ => {
                     println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format shoudl be: {} symbol timesteps", words[0]);
+                    println!("Hint - format should be: {} symbol timesteps", words[0]);
                     return Err(());
                 }
             }

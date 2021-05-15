@@ -249,15 +249,14 @@ impl Exchange {
      * */
     pub fn simulate_market(&mut self, sim: &Simulation) -> Result<i32, ()> {
 
-        let mut current_price = 0.0;
+        let mut current_price: f64;
 
         match self.get_price(&sim.symbol) {
             Ok(p) => {
                 current_price = p;
             },
-            Err(_) => {
-                return Err(()); // TODO better error handling
-            }
+            // TODO better error handling
+            Err(_) => return Err(())
         };
 
         let buy = String::from("buy");
