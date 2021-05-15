@@ -21,7 +21,13 @@ If you don't want to use the interactive version of the program, you can write a
 ## Technical Details
 ### Changelog
 
-#### 3 - Binary Heap (Most Recent)
+#### 4 - Refactoring (Most Recent)
+Managed to nearly 2x bandwidth, we're at *1 million orders in < 7 sec* now, but more on that later.
+
+I split the project up into modules to keep my brain from melting, it turned out to be a good call because I was able to do things less so in a Java way and more so in a Rust way; many thanks to [this reddit thread](https://www.reddit.com/r/rust/comments/5ny09j/tips_to_not_fight_the_borrow_checker/dcf6a59/?context=8&depth=9). Modularizing made moving methods from one struct to another less of a hassle, which made the borrow checker happy. It also made me happy, as I was able to [delete redundant HashMap look-ups](https://github.com/MellowYarker/RustX/pull/2/commits/650bc475bfe6f7e021e55ec266aaf135fa9c8fd5#diff-b87f119a5fecd39dd845d0b76bccdec12291ad21571b3a028007e5ebda2fe5bcR220), pass references rather than copies of data as function args, and use `peek` and `peek_mut` rather than `push` and `pop` for the BinaryHeap.
+
+I noticed something while working on this branch though: assuming a bandwidth of 140k orders per second, it takes around `~7.143μs` to execute 1 order. My i5-chip has a clock-rate of 3.4GHz, that is, it can perform `3400` cycles per μs. Roughly speaking, it takes `7.143 μs/order x 3400 cycles/μs = ~24k cycles/order`. This number seemed extremely high to me, since even an L3-cache reference shouldn't take more than a few hundred cycles. This bothered me until this morning, when I realized that I've been compiling in debug mode this entire time. Debug mode doesn't optimize *any part* of the executable (including imported libraries), it also inserts debugging symbols into the executable, so it's basically big and slow. When compiling in *release mode*, 1 million orders were processed in *0.44 sec*, giving a market bandwidth of ~2.72 million orders per second!
+#### 3 - Binary Heap
 Rather than using vectors which have expensive insertion guarantees, we can use min-max heaps. This way we can still have constant time access to the min/max element, while substantially improving insertion time (thanks Julian!). A million orders takes 13 sec, and this seems to grow linearly with a slope of approximately 1 for the number of orders (i.e *2 million orders = 2 x 1 million = 2 x 13 sec = 26 sec*).
  
 Only perceivable downside is since we don't maintain a sorted list of orders, the latency for a user increases if there are a lot of orders on the market. This is a bit annoying, since we print the updated market after a user submits a buy/sell, but could be fixed with some caching/diffing of most relevant orders (order price closest to the last traded price).
