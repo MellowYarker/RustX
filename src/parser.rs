@@ -54,7 +54,8 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                     let order = Order::from( words[0].to_string(),
                                              words[1].to_string().to_uppercase(),
                                              words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
-                                             words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!")
+                                             words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
+                                             &words[4].to_string()
                                             );
                     if order.quantity <= 0 || order.price <= 0.0 {
                         println!("Malformed \"{}\" request!", words[0]);
@@ -140,13 +141,12 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             match &order.action[..] {
                 "buy" | "sell" => {
                     // Try to get the account
-                    match users.get_mut(&username, &password) {
-                        Some(account) => {
-                            &exchange.submit_order_to_market(order.clone(), account);
-                            &exchange.show_market(&order.security);
-                            &users.print_user(&username, &password);
-                        },
-                        None => ()
+                    if users.authenticate(&username, &password) {
+                        &exchange.submit_order_to_market(users, order.clone(), &username);
+                        &exchange.show_market(&order.security);
+                        // &users.print_user(&username, &password);
+                    } else {
+                        println!("Authentication failed! Either the username doesn't exist or the password was wrong.");
                     }
                 },
                 // Handle unknown action!
@@ -200,7 +200,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     let price = exchange.get_price(&req.symbol);
                     match price {
                         Ok(current_price) => {
-                            &exchange.simulate_market(&req, current_price);
+                            &exchange.simulate_market(&req, users, current_price);
                         },
                         Err(e) => match e {
                             PriceError::NoMarket => {

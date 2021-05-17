@@ -58,7 +58,7 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
         let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
 
         // Update the counters and the price
@@ -80,6 +80,7 @@ impl Exchange {
             new_price = Some(price);
             stats.update_price(price);
             stats.update_filled_orders(&filled_orders);
+            users.update_account_orders(&filled_orders);
             self.extend_past_orders(&mut filled_orders);
         };
 
@@ -176,13 +177,15 @@ impl Exchange {
 
     /* Add an order to the security's order list.
      * If the security isn't in the HashMap, create it.
+     * Assumes user has already been authenticated.
      *
      * Returns Some(new_price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, order: Order, account: &mut UserAccount) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String) -> Option<f64> {
 
+        // Mutable reference to the account associated with given username.
+        let account = users._get_mut(username).expect("USER NOT FOUND!");
         let mut order: Order = order;
-
         let mut new_price = None; // new price if trade occurs
 
         // Set the order_id for the order.
@@ -193,6 +196,7 @@ impl Exchange {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
                 let filled_orders = market.fill_existing_orders(&mut order);
+                // println!("\nFollowing orders were filled.\n{:?}\n", filled_orders);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
                 // as well as the users account.
@@ -214,7 +218,7 @@ impl Exchange {
                 }
                 // Update the state of the exchange.
                 // TODO: have this function modify relevant user accounts
-                new_price = self.update_state(&order, filled_orders);
+                new_price = self.update_state(&order, users, filled_orders);
             },
             None => {
                 // Entry doesn't exist, create it.
@@ -256,24 +260,21 @@ impl Exchange {
      * If these preconditions are not met, we will return an error.
      * Otherwise, we return the number of trades that took place.
      * */
-    pub fn simulate_market(&mut self, sim: &Simulation, current_price: f64) -> Result<i32, ()> {
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, current_price: f64) -> Result<i32, ()> {
 
         let mut current_price = current_price;
 
         let buy = String::from("buy");
         let sell = String::from("sell");
 
+        let buyer_name = String::from("buyer");
+        let seller_name = String::from("seller");
+
         let mut action: &String;
+        let mut username: &String;
 
-        let mut all_users = Users::new();
-
-        all_users.new_account(UserAccount::from(&"buyer".to_string(), &"password".to_string()));
-        all_users.new_account(UserAccount::from(&"seller".to_string(), &"password".to_string()));
-
-        // let buyer_account = all_users.get_mut(&"buyer".to_string(), &"password".to_string()).unwrap();
-        // let seller_account = all_users.get_mut(&"seller".to_string(), &"password".to_string()).unwrap();
-
-        let mut account: &mut UserAccount;
+        users.new_account(UserAccount::from(&buyer_name, &"password".to_string()));
+        users.new_account(UserAccount::from(&seller_name, &"password".to_string()));
 
         // Simulation loop
         for _time_step in 0..sim.duration {
@@ -284,10 +285,10 @@ impl Exchange {
             let rand: f64 = random!(); // quick 0.0 ~ 1.0 generation
             if rand < 0.5 {
                 action = &buy;
-                account = all_users.get_mut(&"buyer".to_string(), &"password".to_string()).expect("ERROR WITH BUY USER!");
+                username = &buyer_name;
             } else {
                 action = &sell;
-                account = all_users.get_mut(&"seller".to_string(), &"password".to_string()).expect("ERROR WITH SELL USER!");
+                username = &seller_name;
             }
 
             // Deviate from the current price
@@ -298,14 +299,19 @@ impl Exchange {
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
             // Create the order and send it to the market
-            let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price);
+            let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price, username);
 
             // Update price here instead of calling get_price, since that requires
             // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(order, account) {
+            // println!("{} placing order.", username);
+            if let Some(p) = self.submit_order_to_market(users, order, username) {
                 current_price = p;
             }
         }
+
+        // for (k, v) in users.users.iter() {
+        //     users.print_user(&k, &v.password);
+        // }
 
         return Ok(0);
     }
