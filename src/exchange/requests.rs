@@ -99,7 +99,7 @@ impl Simulation {
 }
 
 pub enum Request {
-    OrderReq(Order),
+    OrderReq(Order, String, String), // first string is username, second password
     InfoReq(InfoRequest),
     SimReq(Simulation),
     UserReq(UserAccount)

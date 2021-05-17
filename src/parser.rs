@@ -50,7 +50,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Order
         "buy" | "sell" => {
             match words.len() {
-                4 => {
+                6 => {
                     let order = Order::from( words[0].to_string(),
                                              words[1].to_string().to_uppercase(),
                                              words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
@@ -61,11 +61,11 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                         println!("Make sure the quantity and price are greater than 0!");
                         return Err(());
                     }
-                    return Ok(Request::OrderReq(order));
+                    return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
                 },
                 _ => {
                     println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} symbol quantity price", words[0]);
+                    println!("Hint - format should be: {} symbol quantity price username password", words[0]);
                     return Err(());
                 }
             }
@@ -135,21 +135,19 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 
 /* Given a valid Request format, try to execute the Request. */
 pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
-
     match request {
-        Request::UserReq(account) => {
-           match users.new_account(account) {
-               Some(id) => println!("Successfully created new account with id {}.", id),
-               None => println!("Sorry, that username is already taken!")
-           }
-        },
-        Request::OrderReq(order) => {
+        Request::OrderReq(order, username, password) => {
             match &order.action[..] {
                 "buy" | "sell" => {
-                    // Put the order on the market, it might get filled immediately,
-                    // if not it will sit on the market until another order fills it.
-                    &exchange.submit_order_to_market(order.clone());
-                    &exchange.show_market(&order.security);
+                    // Try to get the account
+                    match users.get_mut(&username, &password) {
+                        Some(account) => {
+                            &exchange.submit_order_to_market(order.clone(), account);
+                            &exchange.show_market(&order.security);
+                            &users.print_user(&username, &password);
+                        },
+                        None => ()
+                    }
                 },
                 // Handle unknown action!
                 _ => println!("Sorry, I do not know how to perform {:?}", order)
@@ -218,6 +216,12 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     println!("I don't know how to handle this Simulation request.");
                 }
             }
+        },
+        Request::UserReq(account) => {
+           match users.new_account(account) {
+               Some(id) => println!("Successfully created new account with id {}.", id),
+               None => println!("Sorry, that username is already taken!")
+           }
         }
     }
 }

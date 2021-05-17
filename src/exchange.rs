@@ -13,6 +13,8 @@ pub use crate::exchange::stats::SecStat;
 pub mod market;
 pub use crate::exchange::market::Market;
 
+pub use crate::account::{UserAccount, Users};
+
 // Error types for price information.
 pub enum PriceError {
     NoMarket,
@@ -49,7 +51,9 @@ impl Exchange {
         self.total_orders += 1;
     }
 
-    /* Update the stats for a market given the new order.
+    /* TODO: Update each users account!
+     *
+     * Update the stats for a market given the new order.
      * We modify total buys/sells, total order, as well as potentially price and filled orders.
      *
      * Returns Some(price) if trade occured, or None.
@@ -173,9 +177,9 @@ impl Exchange {
     /* Add an order to the security's order list.
      * If the security isn't in the HashMap, create it.
      *
-     * Returns Some(price) if trade occurred, else None.
+     * Returns Some(new_price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, order: Order) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, order: Order, account: &mut UserAccount) -> Option<f64> {
 
         let mut order: Order = order;
 
@@ -190,7 +194,8 @@ impl Exchange {
                 // Try to fill the new order with existing orders on the market.
                 let filled_orders = market.fill_existing_orders(&mut order);
 
-                // Add the new order to the buy/sell heap if it wasn't completely filled
+                // Add the new order to the buy/sell heap if it wasn't completely filled,
+                // as well as the users account.
                 if order.quantity != order.filled {
                     match &order.action[..] {
                         "buy" => {
@@ -202,11 +207,13 @@ impl Exchange {
                         },
                         _ => ()
                     }
+                    account.placed_orders.push(order.clone());
                 } else {
                     // TEST SPEED
                     // println!("The order has been filled!");
                 }
                 // Update the state of the exchange.
+                // TODO: have this function modify relevant user accounts
                 new_price = self.update_state(&order, filled_orders);
             },
             None => {
@@ -214,6 +221,7 @@ impl Exchange {
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                 let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+                // Store order on market, and in users account.
                 match &order.action[..] {
                     "buy" => {
                         buy_heap.push(order.clone());
@@ -224,6 +232,7 @@ impl Exchange {
                     // We can never get here.
                     _ => ()
                 };
+                account.placed_orders.push(order.clone());
 
                 let new_market = Market::new(buy_heap, sell_heap);
                 self.live_orders.insert(order.security.clone(), new_market);
@@ -256,6 +265,8 @@ impl Exchange {
 
         let mut action: &String;
 
+        let mut account = UserAccount::from(&"admin".to_string(), &"password".to_string());
+
         // Simulation loop
         for _time_step in 0..sim.duration {
             // We want to randomly decide to buy or sell,
@@ -281,7 +292,7 @@ impl Exchange {
 
             // Update price here instead of calling get_price, since that requires
             // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(order) {
+            if let Some(p) = self.submit_order_to_market(order, &mut account) {
                 current_price = p;
             }
         }
