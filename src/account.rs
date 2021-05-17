@@ -3,6 +3,7 @@ use crate::exchange::filled::FilledOrder;
 use std::collections::HashMap;
 
 // Stores data about a user
+#[derive(Debug)]
 pub struct UserAccount {
     pub username: String,
     pub password: String,
@@ -38,6 +39,20 @@ impl UserAccount {
 }
 
 impl Users {
+    /* Returns true if authentication succeeded,
+     * false if username doesn't exist or if password is wrong.
+     */
+    pub fn authenticate(&self, username: &String, password: &String) -> bool {
+        match self.users.get(username) {
+            Some(account) => {
+                if *password == account.password {
+                    return true;
+                }
+            },
+            None => ()
+        }
+        return false;
+    }
     pub fn new() -> Self {
         let map: HashMap<String, UserAccount> = HashMap::new();
         Users {
@@ -99,20 +114,107 @@ impl Users {
         }
     }
 
+    /* Returns a mutable reference to a user account if:
+     *  - the account exists
+     */
+    pub fn _get_mut(&mut self, username: &String) -> Option<&mut UserAccount> {
+        match self.users.get_mut(username) {
+            Some(account) => {
+                return Some(account);
+            },
+            None => {
+                return None;
+            }
+        }
+    }
+
     /* Prints the account information of this user if:
      *  - the account exists and
      *  - the password is correct for this user
      */
     pub fn print_user(&self, username: &String, password: &String) {
         if let Some(account) = self.get(username, password) {
-            println!("Orders Awaiting Execution");
+            println!("Results for user: {}\n", account.username);
+            println!("\tOrders Awaiting Execution");
             for order in account.placed_orders.iter() {
-                println!("{:?}", order);
+                println!("\t\t{:?}", order);
             }
-            println!("\nExecuted Trades");
+            println!("\n\tExecuted Trades");
             for order in account.trades.iter() {
-                println!("{:?}", order);
+                println!("\t\t{:?}", order);
             }
         }
+    }
+
+    /* Update this users placed_orders and trades. */
+    fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
+        let account = self._get_mut(username).expect("The username wasn't found in the database.");
+        for trade in trades.iter() {
+            // Special case!
+            // This account has no placed orders, and the
+            // one we just placed has been filled immediately.
+            if account.placed_orders.len() == 0 {
+                account.trades.push(trade.clone());
+            } else {
+                let mut i = 0;
+                while i != account.placed_orders.len() {
+                    let mut order = &mut account.placed_orders[i];
+                    // Found placed_order corresponding to filled_order
+                    if trade.id == order.order_id {
+                        // Case 1, remove the order from placed_orders
+                        if trade.exchanged == (order.quantity - order.filled) {
+                            account.placed_orders.remove(i);
+                        } else {
+                            // Case 2. update value in placed_orders
+                            order.filled += trade.exchanged;
+                        }
+                        account.trades.push(trade.clone());
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /* Given a vector of Filled Orders, update all the accounts
+     * that had orders filled.
+     */
+    pub fn update_account_orders(&mut self, trades: &Vec<FilledOrder>) {
+
+        /* All orders in the vector were filled by 1 new order,
+         * so we have 2 cases to handle.
+         * 1. Update all accounts who's orders were filled by new order.
+         * 2. Update account of user who's order filled the old orders.
+         *
+         * */
+
+        let mut update_map: HashMap<String, Vec<FilledOrder>> = HashMap::new();
+        let default: Vec<FilledOrder> = Vec::new();
+        // Fill update_map
+        for trade in trades.iter() {
+            let entry = update_map.entry(trade.username.clone()).or_insert(default.clone());
+            entry.push(trade.clone());
+        }
+
+        // Case 1
+        for (key, val) in update_map.iter() {
+            // println!("Updating account: ({})", key);
+            self.update_single_user(&key, val);
+        }
+        // Case 2
+        // We need to switch the order type, and the id's.
+        let mut swap = trades.clone();
+        for trade in swap.iter_mut() {
+            let tmp = trade.filled_by;
+            trade.filled_by = trade.id;
+            trade.id = tmp;
+            if trade.action.as_str() == "buy" {
+                trade.action = String::from("sell");
+            } else {
+                trade.action = String::from("buy");
+            }
+        }
+        self.update_single_user(&swap[0].filler_name, &swap);
     }
 }
