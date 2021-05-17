@@ -2,9 +2,12 @@
 
 pub mod exchange;
 pub mod parser;
+pub mod account;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::parser::{tokenize_input, service_request};
+
+pub use crate::account::{Users};
 
 use std::io::{self, prelude::*, BufReader};
 use std::env;
@@ -14,6 +17,8 @@ fn main() {
 
     // Our central exchange, everything happens here.
     let mut exchange: Exchange = Exchange::new();
+    // All our users are stored here.
+    let mut users: Users = Users::new();
 
     let args: Vec<String> = env::args().collect();
 
@@ -41,7 +46,7 @@ fn main() {
                     // Our input has been validated, and we can now
                     // attempt to service the request.
                     println!("Request: {}", keep);
-                    service_request(request, &mut exchange);
+                    service_request(request, &mut exchange, &mut users);
                 },
                 Err(_) => return
             }
@@ -63,16 +68,18 @@ fn main() {
         println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
         println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
         println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
+
         println!("\tInfo Requests: ACTION SYMBOL(ticker)");
         println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
         println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
-        println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.");
+        println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
+
+        println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
         println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
+
+        println!("\tCreate new user: create USERNAME PASSWORD");
+        println!("\t\tEx: create bigMoney notHashed\n");
         println!("\tYou can see these instructions at any point by typing help.");
-
-
-        // // Our central exchange, everything happens here.
-        // let mut exchange: Exchange = Exchange::new();
 
         loop {
             println!("\n---What would you like to do?---\n");
@@ -93,7 +100,7 @@ fn main() {
 
             // Our input has been validated, and we can now
             // attempt to service the request.
-            service_request(request, &mut exchange);
+            service_request(request, &mut exchange, &mut users);
         }
     }
 }

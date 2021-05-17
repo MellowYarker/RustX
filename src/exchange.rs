@@ -247,17 +247,9 @@ impl Exchange {
      * If these preconditions are not met, we will return an error.
      * Otherwise, we return the number of trades that took place.
      * */
-    pub fn simulate_market(&mut self, sim: &Simulation) -> Result<i32, ()> {
+    pub fn simulate_market(&mut self, sim: &Simulation, current_price: f64) -> Result<i32, ()> {
 
-        let mut current_price: f64;
-
-        match self.get_price(&sim.symbol) {
-            Ok(p) => {
-                current_price = p;
-            },
-            // TODO better error handling
-            Err(_) => return Err(())
-        };
+        let mut current_price = current_price;
 
         let buy = String::from("buy");
         let sell = String::from("sell");

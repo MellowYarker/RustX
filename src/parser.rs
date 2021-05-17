@@ -1,5 +1,8 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
 
+// pub mod account;
+use crate::account::{UserAccount, Users};
+
 /* Prints some helpful information to the console when input is malformed. */
 fn malformed_req(req: &String) {
     println!("\nMalformed \"{}\" request!", req);
@@ -28,6 +31,22 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 
     // The first entry should be the action type.
     match &(words[0])[..] {
+        // Create a new user
+        "create" => {
+            match words.len() {
+                3 => {
+                    // We create the struct here, but do not check if
+                    // the user exists until we service the request.
+                    let user = UserAccount::from(&words[1], &words[2]);
+                    return Ok(Request::UserReq(user));
+                },
+                _ => {
+                    println!("Malformed \"{}\" request!", words[0]);
+                    println!("Hint - format should be: {} username password", words[0]);
+                    return Err(());
+                }
+            }
+        }
         // Order
         "buy" | "sell" => {
             match words.len() {
@@ -92,11 +111,17 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
             println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
             println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
             println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
+
             println!("\tInfo Requests: ACTION SYMBOL(ticker)");
             println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
             println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
-            println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.");
+            println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
+
+            println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
             println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
+
+            println!("\tCreate new user: create USERNAME PASSWORD");
+            println!("\t\tEx: create bigMoney notHashed\n");
 
             return Err(()); // We return an empty error only because there's no more work to do.
         },
@@ -109,9 +134,15 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange) {
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
 
     match request {
+        Request::UserReq(account) => {
+           match users.new_account(account) {
+               Some(id) => println!("Successfully created new account with id {}.", id),
+               None => println!("Sorry, that username is already taken!")
+           }
+        },
         Request::OrderReq(order) => {
             match &order.action[..] {
                 "buy" | "sell" => {
@@ -170,8 +201,8 @@ pub fn service_request(request: Request, exchange: &mut Exchange) {
                     // We have to satisfy the preconditions of the simulation function.
                     let price = exchange.get_price(&req.symbol);
                     match price {
-                        Ok(_) => {
-                            &exchange.simulate_market(&req);
+                        Ok(current_price) => {
+                            &exchange.simulate_market(&req, current_price);
                         },
                         Err(e) => match e {
                             PriceError::NoMarket => {

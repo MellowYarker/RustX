@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use crate::account::UserAccount;
 // An order type for a security
 #[derive(Debug)]
 pub struct Order {
@@ -100,5 +101,6 @@ impl Simulation {
 pub enum Request {
     OrderReq(Order),
     InfoReq(InfoRequest),
-    SimReq(Simulation)
+    SimReq(Simulation),
+    UserReq(UserAccount)
 }
