@@ -265,7 +265,15 @@ impl Exchange {
 
         let mut action: &String;
 
-        let mut account = UserAccount::from(&"admin".to_string(), &"password".to_string());
+        let mut all_users = Users::new();
+
+        all_users.new_account(UserAccount::from(&"buyer".to_string(), &"password".to_string()));
+        all_users.new_account(UserAccount::from(&"seller".to_string(), &"password".to_string()));
+
+        // let buyer_account = all_users.get_mut(&"buyer".to_string(), &"password".to_string()).unwrap();
+        // let seller_account = all_users.get_mut(&"seller".to_string(), &"password".to_string()).unwrap();
+
+        let mut account: &mut UserAccount;
 
         // Simulation loop
         for _time_step in 0..sim.duration {
@@ -276,8 +284,10 @@ impl Exchange {
             let rand: f64 = random!(); // quick 0.0 ~ 1.0 generation
             if rand < 0.5 {
                 action = &buy;
+                account = all_users.get_mut(&"buyer".to_string(), &"password".to_string()).expect("ERROR WITH BUY USER!");
             } else {
                 action = &sell;
+                account = all_users.get_mut(&"seller".to_string(), &"password".to_string()).expect("ERROR WITH SELL USER!");
             }
 
             // Deviate from the current price
@@ -292,7 +302,7 @@ impl Exchange {
 
             // Update price here instead of calling get_price, since that requires
             // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(order, &mut account) {
+            if let Some(p) = self.submit_order_to_market(order, account) {
                 current_price = p;
             }
         }
