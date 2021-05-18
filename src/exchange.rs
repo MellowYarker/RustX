@@ -181,10 +181,10 @@ impl Exchange {
      *
      * Returns Some(new_price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool) -> Option<f64> {
 
         // Mutable reference to the account associated with given username.
-        let account = users._get_mut(username).expect("USER NOT FOUND!");
+        let account = users.get_mut(username, auth).expect("USER NOT FOUND!");
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
 
@@ -211,7 +211,7 @@ impl Exchange {
                         },
                         _ => ()
                     }
-                    account.placed_orders.push(order.clone());
+                    account.pending_orders.push(order.clone());
                 } else {
                     // TEST SPEED
                     // println!("The order has been filled!");
@@ -235,7 +235,7 @@ impl Exchange {
                     // We can never get here.
                     _ => ()
                 };
-                account.placed_orders.push(order.clone());
+                account.pending_orders.push(order.clone());
 
                 let new_market = Market::new(buy_heap, sell_heap);
                 self.live_orders.insert(order.security.clone(), new_market);
@@ -302,7 +302,7 @@ impl Exchange {
 
             // Update price here instead of calling get_price, since that requires
             // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(users, order, username) {
+            if let Some(p) = self.submit_order_to_market(users, order, username, true) {
                 current_price = p;
             }
         }

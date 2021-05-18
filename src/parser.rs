@@ -142,9 +142,9 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 "buy" | "sell" => {
                     // Try to get the account
                     if users.authenticate(&username, &password) {
-                        &exchange.submit_order_to_market(users, order.clone(), &username);
+                        &exchange.submit_order_to_market(users, order.clone(), &username, true);
                         &exchange.show_market(&order.security);
-                        // &users.print_user(&username, &password);
+                        &users.print_user(&username, &password);
                     } else {
                         println!("Authentication failed! Either the username doesn't exist or the password was wrong.");
                     }

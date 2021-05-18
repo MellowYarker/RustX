@@ -8,8 +8,8 @@ pub struct UserAccount {
     pub username: String,
     pub password: String,
     pub id: Option<i32>,
-    pub placed_orders: Vec<Order>,
-    pub trades: Vec<FilledOrder>
+    pub pending_orders: Vec<Order>,         // Orders that have not been completely filled.
+    pub executed_trades: Vec<FilledOrder>   // Trades that have occurred.
 }
 
 // Where we store all our users
@@ -26,8 +26,8 @@ impl UserAccount {
             username: name.to_string().clone(),
             password: password.to_string().clone(),
             id: None, // We set this later
-            placed_orders: placed,
-            trades: trades,
+            pending_orders: placed,
+            executed_trades: trades,
         }
     }
 
@@ -39,7 +39,9 @@ impl UserAccount {
 }
 
 impl Users {
-    /* Returns true if authentication succeeded,
+    /* TODO: Lets return some type of Error instead.
+     *       This would let us specify the reason for failure.
+     * Returns true if authentication succeeded,
      * false if username doesn't exist or if password is wrong.
      */
     pub fn authenticate(&self, username: &String, password: &String) -> bool {
@@ -53,6 +55,7 @@ impl Users {
         }
         return false;
     }
+
     pub fn new() -> Self {
         let map: HashMap<String, UserAccount> = HashMap::new();
         Users {
@@ -61,8 +64,9 @@ impl Users {
         }
     }
 
-    // If an account with this username exists, exit early, otherwise
-    // add the account and return it's ID.
+    /* If an account with this username exists, do nothing, otherwise
+     * add the account and return it's ID.
+     */
     pub fn new_account(&mut self, account: UserAccount) -> Option<i32> {
         if self.users.contains_key(&account.username) {
             return None;
@@ -94,30 +98,37 @@ impl Users {
         }
     }
 
-    /* Returns a mutable reference to a user account if:
+    /* TODO: Return a Result<T, E> instead of Option so we
+     *       can specify any errors!
+     * Returns a mutable reference to a user account if:
      *  - the account exists and
-     *  - the password is correct for this user
+     *  - the user has been authenticated
      */
-    pub fn get_mut(&mut self, username: &String, password: &String) -> Option<&mut UserAccount> {
-        match self.users.get_mut(username) {
-            Some(account) => {
-                if *password == account.password {
+    pub fn get_mut(&mut self, username: &String, authenticated: bool) -> Option<&mut UserAccount> {
+        if authenticated {
+            match self.users.get_mut(username) {
+                Some(account) => {
+                    // if *password == account.password {
                     return Some(account);
+                    // }
+                    // println!("Incorrect password for username ({})", username);
+                    // return None;
+                },
+                None => {
+                    println!("The provided username doesn't exist in our records.");
+                    return None;
                 }
-                println!("Incorrect password for username ({})", username);
-                return None;
-            },
-            None => {
-                println!("The provided username doesn't exist in our records.");
-                return None;
             }
         }
+        println!("Must authenticate before accessing account belonging to: ({})", username);
+        return None;
     }
 
-    /* Returns a mutable reference to a user account if:
+    /* For internal use only.
+     * Returns a mutable reference to a user account if:
      *  - the account exists
      */
-    pub fn _get_mut(&mut self, username: &String) -> Option<&mut UserAccount> {
+    fn _get_mut(&mut self, username: &String) -> Option<&mut UserAccount> {
         match self.users.get_mut(username) {
             Some(account) => {
                 return Some(account);
@@ -136,40 +147,40 @@ impl Users {
         if let Some(account) = self.get(username, password) {
             println!("Results for user: {}\n", account.username);
             println!("\tOrders Awaiting Execution");
-            for order in account.placed_orders.iter() {
+            for order in account.pending_orders.iter() {
                 println!("\t\t{:?}", order);
             }
             println!("\n\tExecuted Trades");
-            for order in account.trades.iter() {
+            for order in account.executed_trades.iter() {
                 println!("\t\t{:?}", order);
             }
         }
     }
 
-    /* Update this users placed_orders and trades.
+    /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      * */
     fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
         let account = self._get_mut(username).expect("The username wasn't found in the database.");
         for trade in trades.iter() {
-            match account.placed_orders.binary_search_by(|probe: &Order| probe.order_id.cmp(&trade.id)){
+            match account.pending_orders.binary_search_by(|probe: &Order| probe.order_id.cmp(&trade.id)){
                 Ok(index) => {
                     // The order that was filled was found in the accounts
                     // pending orders.
-                    let order: &mut Order = &mut account.placed_orders[index];
+                    let order: &mut Order = &mut account.pending_orders[index];
                     if trade.exchanged == (order.quantity - order.filled) {
                         // order completely filled
-                        account.placed_orders.remove(index);
+                        account.pending_orders.remove(index);
                     } else {
                         // order partially filled
                         order.filled += trade.exchanged;
                     }
-                    account.trades.push(trade.clone());
+                    account.executed_trades.push(trade.clone());
                 },
                 Err(_) => {
-                    // The trade wasn't found in placed_orders because
+                    // The trade wasn't found in pending_orders because
                     // it was completely filled before being placed on the market.
-                    account.trades.push(trade.clone());
+                    account.executed_trades.push(trade.clone());
                 }
             }
         }
