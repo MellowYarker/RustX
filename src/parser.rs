@@ -1,12 +1,19 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
+pub use crate::print_instructions;
 
 // pub mod account;
 use crate::account::{UserAccount, Users};
 
 /* Prints some helpful information to the console when input is malformed. */
-fn malformed_req(req: &String) {
+fn malformed_req(req: &str, req_type: &str) {
     println!("\nMalformed \"{}\" request!", req);
-    println!("Hint - format should be: {} symbol", req);
+    match req_type {
+       "create" => println!("Hint - format should be: {} username password", req),
+       "order"  => println!("Hint - format should be: {} symbol quantity price username password", req),
+       "info"   => println!("Hint - format should be: {} symbol", req),
+       "sim"    => println!("Hint - format should be: {} symbol timesteps", req),
+       _        => ()
+    }
 }
 
 /* Takes a string from stdin, and turns it into a Request Enum.
@@ -41,8 +48,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                     return Ok(Request::UserReq(user));
                 },
                 _ => {
-                    println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} username password", words[0]);
+                    malformed_req(&words[0], &words[0]);
                     return Err(());
                 }
             }
@@ -65,8 +71,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                     return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
                 },
                 _ => {
-                    println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} symbol quantity price username password", words[0]);
+                    malformed_req(&words[0], "order");
                     return Err(());
                 }
             }
@@ -79,7 +84,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                     return Ok(Request::InfoReq(req));
                 },
                 _ =>  {
-                    malformed_req(&words[0]);
+                    malformed_req(&words[0], "info");
                     return Err(());
                 }
             }
@@ -96,34 +101,14 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                     return Ok(Request::SimReq(req));
                 },
                 _ => {
-                    println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} symbol timesteps", words[0]);
+                    malformed_req(&words[0], "sim");
                     return Err(());
                 }
             }
         },
         // request instructions
         "help" => {
-            let buy_price = 167.34;
-            let buy_amount = 24;
-            let sell_price = 999.85;
-            let sell_amount = 12;
-            println!("Usage:");
-            println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
-            println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
-            println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
-
-            println!("\tInfo Requests: ACTION SYMBOL(ticker)");
-            println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
-            println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
-            println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
-
-            println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
-            println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
-
-            println!("\tCreate new user: create USERNAME PASSWORD");
-            println!("\t\tEx: create bigMoney notHashed\n");
-
+            print_instructions();
             return Err(()); // We return an empty error only because there's no more work to do.
         },
         // Unknown input

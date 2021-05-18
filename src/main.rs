@@ -13,6 +13,32 @@ use std::io::{self, prelude::*, BufReader};
 use std::env;
 use std::fs::File;
 
+pub fn print_instructions() {
+    let buy_price = 167.34;
+    let buy_amount = 24;
+    let sell_price = 999.85;
+    let sell_amount = 12;
+    let user = "example";
+    let pass = "pass";
+
+    println!("Usage:");
+    println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE USERNAME PASSWORD");
+    println!("\t\tEx: BUY GME {} {} {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share. Order is placed by {} with password {}.", buy_amount, buy_price, user, pass, buy_amount, buy_price, user, pass);
+    println!("\t\tEx: SELL GME {} {} {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share. Order is placed by {} with password {}.\n", sell_amount, sell_price, user, pass, sell_amount, sell_price, user, pass);
+
+    println!("\tInfo Requests: ACTION SYMBOL(ticker)");
+    println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
+    println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
+    println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
+
+    println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
+    println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
+
+    println!("\tCreate new user: create USERNAME PASSWORD");
+    println!("\t\tEx: create bigMoney notHashed\n");
+    println!("\tYou can see these instructions at any point by typing help.");
+}
+
 fn main() {
 
     // Our central exchange, everything happens here.
@@ -60,27 +86,7 @@ fn main() {
          | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/  / /_/ /_/ /  / _, _/ /_/ (__  ) /_/   |
          |__/|__/\\___/_/\\___/\\____/_/ /_/ /_/\\___/   \\__/\\____/  /_/ |_|\\__,_/____/\\__/_/|_|\n");
 
-        let buy_price = 167.34;
-        let buy_amount = 24;
-        let sell_price = 999.85;
-        let sell_amount = 12;
-        println!("Usage:");
-        println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
-        println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
-        println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
-
-        println!("\tInfo Requests: ACTION SYMBOL(ticker)");
-        println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
-        println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
-        println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
-
-        println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
-        println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
-
-        println!("\tCreate new user: create USERNAME PASSWORD");
-        println!("\t\tEx: create bigMoney notHashed\n");
-        println!("\tYou can see these instructions at any point by typing help.");
-
+        print_instructions();
         loop {
             println!("\n---What would you like to do?---\n");
 
