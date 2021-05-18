@@ -217,7 +217,6 @@ impl Exchange {
                     // println!("The order has been filled!");
                 }
                 // Update the state of the exchange.
-                // TODO: have this function modify relevant user accounts
                 new_price = self.update_state(&order, users, filled_orders);
             },
             None => {
@@ -303,15 +302,14 @@ impl Exchange {
 
             // Update price here instead of calling get_price, since that requires
             // unnecessary HashMap lookup.
-            // println!("{} placing order.", username);
             if let Some(p) = self.submit_order_to_market(users, order, username) {
                 current_price = p;
             }
         }
 
-        // for (k, v) in users.users.iter() {
-        //     users.print_user(&k, &v.password);
-        // }
+        for (k, v) in users.users.iter() {
+            users.print_user(&k, &v.password);
+        }
 
         return Ok(0);
     }
