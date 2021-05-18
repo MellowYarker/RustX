@@ -146,32 +146,30 @@ impl Users {
         }
     }
 
-    /* Update this users placed_orders and trades. */
+    /* Update this users placed_orders and trades.
+     * We have 2 cases to consider, as explained in update_account_orders().
+     * */
     fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
         let account = self._get_mut(username).expect("The username wasn't found in the database.");
         for trade in trades.iter() {
-            // Special case!
-            // This account has no placed orders, and the
-            // one we just placed has been filled immediately.
-            if account.placed_orders.len() == 0 {
-                account.trades.push(trade.clone());
-            } else {
-                let mut i = 0;
-                while i != account.placed_orders.len() {
-                    let mut order = &mut account.placed_orders[i];
-                    // Found placed_order corresponding to filled_order
-                    if trade.id == order.order_id {
-                        // Case 1, remove the order from placed_orders
-                        if trade.exchanged == (order.quantity - order.filled) {
-                            account.placed_orders.remove(i);
-                        } else {
-                            // Case 2. update value in placed_orders
-                            order.filled += trade.exchanged;
-                        }
-                        account.trades.push(trade.clone());
-                        break;
+            match account.placed_orders.binary_search_by(|probe: &Order| probe.order_id.cmp(&trade.id)){
+                Ok(index) => {
+                    // The order that was filled was found in the accounts
+                    // pending orders.
+                    let order: &mut Order = &mut account.placed_orders[index];
+                    if trade.exchanged == (order.quantity - order.filled) {
+                        // order completely filled
+                        account.placed_orders.remove(index);
+                    } else {
+                        // order partially filled
+                        order.filled += trade.exchanged;
                     }
-                    i += 1;
+                    account.trades.push(trade.clone());
+                },
+                Err(_) => {
+                    // The trade wasn't found in placed_orders because
+                    // it was completely filled before being placed on the market.
+                    account.trades.push(trade.clone());
                 }
             }
         }
