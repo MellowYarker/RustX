@@ -211,7 +211,8 @@ impl Exchange {
                         },
                         _ => ()
                     }
-                    account.pending_orders.push(order.clone());
+                    // account.pending_orders.push(order.clone());
+                    account.pending_orders.insert(order.order_id, order.clone());
                 } else {
                     // TEST SPEED
                     // println!("The order has been filled!");
@@ -235,7 +236,8 @@ impl Exchange {
                     // We can never get here.
                     _ => ()
                 };
-                account.pending_orders.push(order.clone());
+                // account.pending_orders.push(order.clone());
+                account.pending_orders.insert(order.order_id, order.clone());
 
                 let new_market = Market::new(buy_heap, sell_heap);
                 self.live_orders.insert(order.security.clone(), new_market);
@@ -307,9 +309,9 @@ impl Exchange {
             }
         }
 
-        for (k, v) in users.users.iter() {
-            users.print_user(&k, &v.password);
-        }
+        // for (k, v) in users.users.iter() {
+        //     users.print_user(&k, &v.password);
+        // }
 
         return Ok(0);
     }

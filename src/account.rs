@@ -8,7 +8,7 @@ pub struct UserAccount {
     pub username: String,
     pub password: String,
     pub id: Option<i32>,
-    pub pending_orders: Vec<Order>,         // Orders that have not been completely filled.
+    pub pending_orders: HashMap<i32, Order>,// Orders that have not been completely filled.
     pub executed_trades: Vec<FilledOrder>   // Trades that have occurred.
 }
 
@@ -20,7 +20,7 @@ pub struct Users {
 
 impl UserAccount {
     pub fn from(name: &String, password: &String) -> Self {
-        let placed: Vec<Order> = Vec::new();
+        let placed: HashMap<i32, Order> = HashMap::new();
         let trades: Vec<FilledOrder> = Vec::new();
         UserAccount {
             username: name.to_string().clone(),
@@ -108,11 +108,7 @@ impl Users {
         if authenticated {
             match self.users.get_mut(username) {
                 Some(account) => {
-                    // if *password == account.password {
                     return Some(account);
-                    // }
-                    // println!("Incorrect password for username ({})", username);
-                    // return None;
                 },
                 None => {
                     println!("The provided username doesn't exist in our records.");
@@ -145,8 +141,8 @@ impl Users {
      */
     pub fn print_user(&self, username: &String, password: &String) {
         if let Some(account) = self.get(username, password) {
-            println!("Results for user: {}\n", account.username);
-            println!("\tOrders Awaiting Execution");
+            println!("\nAccount information for user: {}", account.username);
+            println!("\n\tOrders Awaiting Execution");
             for order in account.pending_orders.iter() {
                 println!("\t\t{:?}", order);
             }
@@ -154,6 +150,7 @@ impl Users {
             for order in account.executed_trades.iter() {
                 println!("\t\t{:?}", order);
             }
+            println!("\n");
         }
     }
 
@@ -162,27 +159,30 @@ impl Users {
      * */
     fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
         let account = self._get_mut(username).expect("The username wasn't found in the database.");
+        // Since we can't remove entries while iterating, store the key's here.
+        let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len()); // We know we won't need more than this many entries.
         for trade in trades.iter() {
-            match account.pending_orders.binary_search_by(|probe: &Order| probe.order_id.cmp(&trade.id)){
-                Ok(index) => {
-                    // The order that was filled was found in the accounts
-                    // pending orders.
-                    let order: &mut Order = &mut account.pending_orders[index];
+            match account.pending_orders.get_mut(&trade.id) {
+                Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
                         // order completely filled
-                        account.pending_orders.remove(index);
+                        entries_to_remove.push(order.order_id);
+                        // account.pending_orders.remove(&order.order_id);
                     } else {
                         // order partially filled
                         order.filled += trade.exchanged;
                     }
                     account.executed_trades.push(trade.clone());
                 },
-                Err(_) => {
-                    // The trade wasn't found in pending_orders because
-                    // it was completely filled before being placed on the market.
+                None => {
                     account.executed_trades.push(trade.clone());
                 }
             }
+        }
+
+        // Remove all elements from account's hashmap that need to be removed.
+        for i in &entries_to_remove {
+            account.pending_orders.remove(&i);
         }
     }
 
@@ -207,6 +207,7 @@ impl Users {
         }
 
         // Case 1
+        // This is a good candidate for multithreading.
         for (key, val) in update_map.iter() {
             // println!("Updating account: ({})", key);
             self.update_single_user(&key, val);
