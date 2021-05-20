@@ -51,9 +51,7 @@ impl Exchange {
         self.total_orders += 1;
     }
 
-    /* TODO: Update each users account!
-     *
-     * Update the stats for a market given the new order.
+    /* Update the stats for a market given the new order.
      * We modify total buys/sells, total order, as well as potentially price and filled orders.
      *
      * Returns Some(price) if trade occured, or None.

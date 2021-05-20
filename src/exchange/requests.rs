@@ -9,7 +9,7 @@ pub struct Order {
     pub filled: i32,        // Quantity filled so far
     pub price: f64,
     pub order_id: i32,
-    pub username: String        // username of user who placed order.
+    pub username: String    // username of user who placed order.
 }
 
 impl Order {
