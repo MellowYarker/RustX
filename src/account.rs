@@ -18,12 +18,6 @@ pub struct UserAccount {
     pub executed_trades: Vec<FilledOrder>   // Trades that have occurred.
 }
 
-// Where we store all our users
-pub struct Users {
-    users: HashMap<String, UserAccount>,
-    total: i32
-}
-
 impl UserAccount {
     pub fn from(name: &String, password: &String) -> Self {
         let placed: HashMap<i32, Order> = HashMap::new();
@@ -42,6 +36,38 @@ impl UserAccount {
         self.id = Some(users.total + 1);
         return self.id.unwrap();
     }
+
+    /* Consider the following scenario:
+     *  -   user places buy order for 10 shares of X at $10/share.
+     *          - the order remains on the market and is not filled.
+     *  -   later, the same user places a sell order for 3 shares of X at n <= $10/share.
+     *  -   the new order will fill their old order, which is probably undesirable,
+     *      or even illegal.
+     *
+     *  Returns true if this order will not fill any pending orders placed by
+     *  this user. Otherwise, returns false.
+     **/
+    pub fn validate_order(&self, order: &Order) -> bool {
+        // TODO: Optimize this, maybe change the data structure. (another hashmap)
+        for (_, pending) in self.pending_orders.iter() {
+            // Same market
+            if order.security == pending.security && order.action != pending.action {
+                if (order.action.as_str() == "buy"  && pending.price <= order.price) ||
+                   (order.action.as_str() == "sell" && order.price <= pending.price)
+               {
+                   return false;
+               }
+            }
+        }
+        return true;
+    }
+}
+
+
+// Where we store all our users
+pub struct Users {
+    users: HashMap<String, UserAccount>,
+    total: i32
 }
 
 impl Users {
@@ -65,11 +91,11 @@ impl Users {
      * TODO: Maybe we can return some type of session token
      *       for the frontend to hold on to?
      */
-    pub fn authenticate<'a>(&self, username: &'a String, password: & String) -> Result<(), AuthError<'a>> {
+    pub fn authenticate<'a>(&self, username: &'a String, password: & String) -> Result<&UserAccount, AuthError<'a>> {
         match self.users.get(username) {
             Some(account) => {
                 if *password == account.password {
-                    return Ok(());
+                    return Ok(account);
                 }
                 return Err(AuthError::BadPassword(None))
             },

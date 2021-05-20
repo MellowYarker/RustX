@@ -126,10 +126,13 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 "buy" | "sell" => {
                     // Try to get the account
                     match users.authenticate(&username, &password) {
-                        Ok(_) => {
-                            &exchange.submit_order_to_market(users, order.clone(), &username, true);
-                            &exchange.show_market(&order.security);
-                            &users.print_user(&username, &password);
+                        Ok(account) => {
+                            if account.validate_order(&order) {
+                                &exchange.submit_order_to_market(users, order.clone(), &username, true);
+                                &exchange.show_market(&order.security);
+                            } else {
+                                println!("Order could not be placed. This order would fill one of your currently pending orders!");
+                            }
                         },
                         Err(e) => Users::print_auth_error(e)
                     }

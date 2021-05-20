@@ -41,11 +41,6 @@ impl Market {
                 None => return new_price // No more sell orders to fill
             };
 
-            // We don't allow a user to buy their own sell order.
-            if highest_bid.username == lowest_offer.username {
-                continue;
-            }
-
             let lowest_sell_remaining = lowest_offer.quantity - lowest_offer.filled;
             let highest_bid_remaining = highest_bid.quantity - highest_bid.filled;
 
@@ -108,11 +103,6 @@ impl Market {
                 Some(bid) => bid,
                 None => return new_price // No more buy orders to fill
             };
-
-            // We don't allow a user to sell into their own buy order.
-            if highest_bid.username == lowest_offer.username {
-                continue;
-            }
 
             let lowest_sell_remaining = lowest_offer.quantity - lowest_offer.filled;
             let highest_bid_remaining = highest_bid.quantity - highest_bid.filled;

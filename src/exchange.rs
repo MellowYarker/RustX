@@ -306,10 +306,14 @@ impl Exchange {
             // Create the order and send it to the market
             let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price, username);
 
-            // Update price here instead of calling get_price, since that requires
-            // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(users, order, username, true) {
-                current_price = p;
+            if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
+                if account.validate_order(&order) {
+                    // Update price here instead of calling get_price, since that requires
+                    // unnecessary HashMap lookup.
+                    if let Some(p) = self.submit_order_to_market(users, order, username, true) {
+                        current_price = p;
+                    }
+                }
             }
         }
 
