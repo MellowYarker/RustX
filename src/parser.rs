@@ -8,7 +8,7 @@ use crate::account::{UserAccount, Users};
 fn malformed_req(req: &str, req_type: &str) {
     println!("\nMalformed \"{}\" request!", req);
     match req_type {
-       "create" => println!("Hint - format should be: {} username password", req),
+       "account" => println!("Hint - format should be: {} create/show username password", req),
        "order"  => println!("Hint - format should be: {} symbol quantity price username password", req),
        "info"   => println!("Hint - format should be: {} symbol", req),
        "sim"    => println!("Hint - format should be: {} symbol timesteps", req),
@@ -39,13 +39,12 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
     // The first entry should be the action type.
     match &(words[0])[..] {
         // Create a new user
-        "create" => {
+        "account" => {
             match words.len() {
-                3 => {
-                    // We create the struct here, but do not check if
-                    // the user exists until we service the request.
-                    let user = UserAccount::from(&words[1], &words[2]);
-                    return Ok(Request::UserReq(user));
+                4 => {
+                    let action = words[1].to_string().clone();
+                    let user = UserAccount::from(&words[2], &words[3]);
+                    return Ok(Request::UserReq(user, action));
                 },
                 _ => {
                     malformed_req(&words[0], &words[0]);
@@ -203,11 +202,25 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 }
             }
         },
-        Request::UserReq(account) => {
-           match users.new_account(account) {
-               Some(id) => println!("Successfully created new account with id {}.", id),
-               None => println!("Sorry, that username is already taken!")
-           }
+        Request::UserReq(account, action) => {
+            match &action[..] {
+                "create" => {
+                   match users.new_account(account) {
+                       Some(id) => println!("Successfully created new account with id {}.", id),
+                       None => println!("Sorry, that username is already taken!")
+                   }
+                },
+                "show" => {
+                    match users.authenticate(&account.username, &account.password) {
+                        Ok(_) => {
+                            // TODO: Figure out authentication because this is dumb.
+                            users.print_user(&account.username, &account.password);
+                        },
+                        Err(e) => Users::print_auth_error(e)
+                    }
+                },
+                _ => println!("Sorry I do not know how to handle that account request.")
+            }
         }
     }
 }

@@ -22,7 +22,7 @@ pub fn print_instructions() {
     let pass = "pass";
 
     println!("Usage:");
-    println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE USERNAME PASSWORD");
+    println!("\tOrders: ACTION(buy/sell) SYMBOL(ticker) QUANTITY PRICE USERNAME PASSWORD");
     println!("\t\tEx: BUY GME {} {} {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share. Order is placed by {} with password {}.", buy_amount, buy_price, user, pass, buy_amount, buy_price, user, pass);
     println!("\t\tEx: SELL GME {} {} {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share. Order is placed by {} with password {}.\n", sell_amount, sell_price, user, pass, sell_amount, sell_price, user, pass);
 
@@ -34,8 +34,8 @@ pub fn print_instructions() {
     println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
     println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
 
-    println!("\tCreate new user: create USERNAME PASSWORD");
-    println!("\t\tEx: create bigMoney notHashed\n");
+    println!("\tAccount Requests: account create/show USERNAME PASSWORD");
+    println!("\t\tEx: account create bigMoney notHashed\n");
     println!("\tYou can see these instructions at any point by typing help.");
 }
 

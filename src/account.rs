@@ -159,8 +159,8 @@ impl Users {
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
                 println!("\n\tOrders Awaiting Execution");
-                for order in account.pending_orders.iter() {
-                    println!("\t\t{:?}", order);
+                for (_, value) in account.pending_orders.iter() {
+                    println!("\t\t{:?}", value);
                 }
                 println!("\n\tExecuted Trades");
                 for order in account.executed_trades.iter() {
@@ -175,11 +175,17 @@ impl Users {
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      * */
+    // fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
     fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
         let account = self._get_mut(username).expect("The username wasn't found in the database.");
         // Since we can't remove entries while iterating, store the key's here.
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len()); // We know we won't need more than this many entries.
         for trade in trades.iter() {
+            // let mut id = trade.id;
+            // if is_filler {
+            //     id = trade.filled_by;
+            // }
+            // match account.pending_orders.get_mut(&id) {
             match account.pending_orders.get_mut(&trade.id) {
                 Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
@@ -228,21 +234,26 @@ impl Users {
         // This is a good candidate for multithreading.
         for (key, val) in update_map.iter() {
             // println!("Updating account: ({})", key);
+            // self.update_single_user(&key, val, false);
             self.update_single_user(&key, val);
         }
         // Case 2
-        // We need to switch the order type, and the id's.
+        // We need to switch the order type.
         let mut swap = trades.clone();
         for trade in swap.iter_mut() {
+            // swap id's to update filler
             let tmp = trade.filled_by;
             trade.filled_by = trade.id;
             trade.id = tmp;
+
+            // swap order type
             if trade.action.as_str() == "buy" {
                 trade.action = String::from("sell");
             } else {
                 trade.action = String::from("buy");
             }
         }
+        // self.update_single_user(&swap[0].filler_name, &swap, true);
         self.update_single_user(&swap[0].filler_name, &swap);
     }
 }
