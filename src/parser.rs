@@ -2,7 +2,7 @@ pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation
 pub use crate::print_instructions;
 
 // pub mod account;
-use crate::account::{UserAccount, Users};
+use crate::account::{UserAccount, Users, AuthError};
 
 /* Prints some helpful information to the console when input is malformed. */
 fn malformed_req(req: &str, req_type: &str) {
@@ -126,12 +126,16 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             match &order.action[..] {
                 "buy" | "sell" => {
                     // Try to get the account
-                    if users.authenticate(&username, &password) {
-                        &exchange.submit_order_to_market(users, order.clone(), &username, true);
-                        &exchange.show_market(&order.security);
-                        &users.print_user(&username, &password);
-                    } else {
-                        println!("Authentication failed! Either the username doesn't exist or the password was wrong.");
+                    match users.authenticate(&username, &password) {
+                        Ok(_) => {
+                            &exchange.submit_order_to_market(users, order.clone(), &username, true);
+                            &exchange.show_market(&order.security);
+                            &users.print_user(&username, &password);
+                        },
+                        Err(e) => match e {
+                            AuthError::NoUser(name) => println!("Authentication failed! User ({}) not found.", name),
+                            AuthError::BadPassword(_) => println!("Authentication failed! Incorrect password!.")
+                        }
                     }
                 },
                 // Handle unknown action!

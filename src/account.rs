@@ -2,6 +2,12 @@ use crate::exchange::requests::Order;
 use crate::exchange::filled::FilledOrder;
 use std::collections::HashMap;
 
+// Error types for authentication
+pub enum AuthError<'a> {
+    NoUser(&'a String),
+    BadPassword(&'a String),
+}
+
 // Stores data about a user
 #[derive(Debug)]
 pub struct UserAccount {
@@ -39,21 +45,26 @@ impl UserAccount {
 }
 
 impl Users {
-    /* TODO: Lets return some type of Error instead.
-     *       This would let us specify the reason for failure.
-     * Returns true if authentication succeeded,
-     * false if username doesn't exist or if password is wrong.
+    /* If the username exists and the password is correct,
+     * we do not return an error.
+     *
+     * If the user doesn't exist, or the user exists and the
+     * password is incorrect, we return an error.
+     *
+     * TODO: Maybe we can return some type of session token
+     *       for the frontend to hold on to?
      */
-    pub fn authenticate(&self, username: &String, password: &String) -> bool {
+    pub fn authenticate<'a>(&self, username: &'a String, password: & String) -> Result<(), AuthError<'a>> {
         match self.users.get(username) {
             Some(account) => {
                 if *password == account.password {
-                    return true;
+                    return Ok(());
                 }
+                return Err(AuthError::BadPassword(username))
             },
             None => ()
         }
-        return false;
+        return Err(AuthError::NoUser(username));
     }
 
     pub fn new() -> Self {
