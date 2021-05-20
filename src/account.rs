@@ -174,32 +174,44 @@ impl Users {
 
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
-     * */
-    // fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
-    fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>) {
-        let account = self._get_mut(username).expect("The username wasn't found in the database.");
+     **/
+    fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
+        let account = self._get_mut(username).expect("update_single_user ERROR: couldn't find user!");
         // Since we can't remove entries while iterating, store the key's here.
-        let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len()); // We know we won't need more than this many entries.
+        // We know we won't need more than trade.len() entries.
+        let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());
+
+        // constant strings
+        const BUY: &str = "buy";
+        const SELL: &str = "sell";
+
         for trade in trades.iter() {
-            // let mut id = trade.id;
-            // if is_filler {
-            //     id = trade.filled_by;
-            // }
-            // match account.pending_orders.get_mut(&id) {
-            match account.pending_orders.get_mut(&trade.id) {
+            let mut id = trade.id;
+            let mut update_trade = trade.clone();
+
+            // If this user submitted the order that was the filler,
+            // we need to access the filled_by id and switch order type.
+            if is_filler {
+                id = trade.filled_by;
+                if trade.action.as_str() == "buy" {
+                    update_trade.action = SELL.to_string();
+                } else {
+                    update_trade.action = BUY.to_string();
+                }
+            }
+
+            match account.pending_orders.get_mut(&id) {
                 Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
                         // order completely filled
                         entries_to_remove.push(order.order_id);
-                        // account.pending_orders.remove(&order.order_id);
                     } else {
-                        // order partially filled
                         order.filled += trade.exchanged;
                     }
-                    account.executed_trades.push(trade.clone());
+                    account.executed_trades.push(update_trade);
                 },
                 None => {
-                    account.executed_trades.push(trade.clone());
+                    account.executed_trades.push(update_trade);
                 }
             }
         }
@@ -216,44 +228,26 @@ impl Users {
     pub fn update_account_orders(&mut self, trades: &Vec<FilledOrder>) {
 
         /* All orders in the vector were filled by 1 new order,
-         * so we have 2 cases to handle.
-         * 1. Update all accounts who's orders were filled by new order.
-         * 2. Update account of user who's order filled the old orders.
-         *
-         * */
+         * so we have to handle 2 cases.
+         *  1. Update all accounts who's orders were filled by new order.
+         *  2. Update account of user who's order filled the old orders.
+         **/
 
+        // Map of {users: freshly executed trades}
         let mut update_map: HashMap<String, Vec<FilledOrder>> = HashMap::new();
-        let default: Vec<FilledOrder> = Vec::new();
+
         // Fill update_map
         for trade in trades.iter() {
-            let entry = update_map.entry(trade.username.clone()).or_insert(default.clone());
+            let entry = update_map.entry(trade.username.clone()).or_insert(Vec::with_capacity(trades.len()));
             entry.push(trade.clone());
         }
 
         // Case 1
-        // This is a good candidate for multithreading.
-        for (key, val) in update_map.iter() {
-            // println!("Updating account: ({})", key);
-            // self.update_single_user(&key, val, false);
-            self.update_single_user(&key, val);
+        // TODO: This is a good candidate for multithreading.
+        for (user, new_trades) in update_map.iter() {
+            self.update_single_user(&user, new_trades, false);
         }
-        // Case 2
-        // We need to switch the order type.
-        let mut swap = trades.clone();
-        for trade in swap.iter_mut() {
-            // swap id's to update filler
-            let tmp = trade.filled_by;
-            trade.filled_by = trade.id;
-            trade.id = tmp;
-
-            // swap order type
-            if trade.action.as_str() == "buy" {
-                trade.action = String::from("sell");
-            } else {
-                trade.action = String::from("buy");
-            }
-        }
-        // self.update_single_user(&swap[0].filler_name, &swap, true);
-        self.update_single_user(&swap[0].filler_name, &swap);
+        // Case 2: update account who placed order that filled others.
+        self.update_single_user(&trades[0].filler_name, &trades, true);
     }
 }
