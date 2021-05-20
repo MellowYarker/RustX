@@ -182,7 +182,13 @@ impl Exchange {
     pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool) -> Option<f64> {
 
         // Mutable reference to the account associated with given username.
-        let account = users.get_mut(username, auth).expect("USER NOT FOUND!");
+        let account = match users.get_mut(username, auth) {
+            Ok(acc) => acc,
+            Err(e) => {
+                Users::print_auth_error(e);
+                return None;
+            }
+        };
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
 

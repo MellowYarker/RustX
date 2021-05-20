@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 // Error types for authentication
 pub enum AuthError<'a> {
-    NoUser(&'a String),
-    BadPassword(&'a String),
+    NoUser(&'a String), // Username
+    BadPassword(Option<String>), // optional error msg
 }
 
 // Stores data about a user
@@ -20,8 +20,8 @@ pub struct UserAccount {
 
 // Where we store all our users
 pub struct Users {
-    pub users: HashMap<String, UserAccount>,
-    pub total: i32
+    users: HashMap<String, UserAccount>,
+    total: i32
 }
 
 impl UserAccount {
@@ -45,6 +45,17 @@ impl UserAccount {
 }
 
 impl Users {
+
+    pub fn print_auth_error(err: AuthError) {
+        match err {
+            AuthError::NoUser(user) => println!("Authentication failed! User ({}) not found.", user),
+            AuthError::BadPassword(message) => if let Some(msg) = message {
+                println!("{}", msg);
+            } else {
+                println!("Authentication failed! Incorrect password!")
+            }
+        }
+    }
     /* If the username exists and the password is correct,
      * we do not return an error.
      *
@@ -60,7 +71,7 @@ impl Users {
                 if *password == account.password {
                     return Ok(());
                 }
-                return Err(AuthError::BadPassword(username))
+                return Err(AuthError::BadPassword(None))
             },
             None => ()
         }
@@ -93,18 +104,16 @@ impl Users {
      *  - the account exists and
      *  - the password is correct for this user
      */
-    pub fn get(&self, username: &String, password: &String) -> Option<&UserAccount> {
+    fn get<'a>(&self, username: &'a String, password: &String) -> Result<&UserAccount, AuthError<'a>> {
         match self.users.get(username) {
             Some(account) => {
                 if *password == account.password {
-                    return Some(account);
+                    return Ok(account);
                 }
-                println!("Incorrect password for username ({})", username);
-                return None;
+                return Err(AuthError::BadPassword(None));
             },
             None => {
-                println!("The provided username doesn't exist in our records.");
-                return None;
+                return Err(AuthError::NoUser(username));
             }
         }
     }
@@ -115,35 +124,30 @@ impl Users {
      *  - the account exists and
      *  - the user has been authenticated
      */
-    pub fn get_mut(&mut self, username: &String, authenticated: bool) -> Option<&mut UserAccount> {
+    pub fn get_mut<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&mut UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get_mut(username) {
                 Some(account) => {
-                    return Some(account);
+                    return Ok(account);
                 },
                 None => {
-                    println!("The provided username doesn't exist in our records.");
-                    return None;
+                    return Err(AuthError::NoUser(username));
                 }
             }
         }
-        println!("Must authenticate before accessing account belonging to: ({})", username);
-        return None;
+        let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
+        return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
     /* For internal use only.
      * Returns a mutable reference to a user account if:
      *  - the account exists
+     * TODO: Is it stupid to have an entire function for this?
+     *       The benefit is we indicate only internal functions access
+     *       the `users` property.
      */
     fn _get_mut(&mut self, username: &String) -> Option<&mut UserAccount> {
-        match self.users.get_mut(username) {
-            Some(account) => {
-                return Some(account);
-            },
-            None => {
-                return None;
-            }
-        }
+        self.users.get_mut(username)
     }
 
     /* Prints the account information of this user if:
@@ -151,17 +155,20 @@ impl Users {
      *  - the password is correct for this user
      */
     pub fn print_user(&self, username: &String, password: &String) {
-        if let Some(account) = self.get(username, password) {
-            println!("\nAccount information for user: {}", account.username);
-            println!("\n\tOrders Awaiting Execution");
-            for order in account.pending_orders.iter() {
-                println!("\t\t{:?}", order);
-            }
-            println!("\n\tExecuted Trades");
-            for order in account.executed_trades.iter() {
-                println!("\t\t{:?}", order);
-            }
-            println!("\n");
+        match self.get(username, password) {
+            Ok(account) => {
+                println!("\nAccount information for user: {}", account.username);
+                println!("\n\tOrders Awaiting Execution");
+                for order in account.pending_orders.iter() {
+                    println!("\t\t{:?}", order);
+                }
+                println!("\n\tExecuted Trades");
+                for order in account.executed_trades.iter() {
+                    println!("\t\t{:?}", order);
+                }
+                println!("\n");
+            },
+            Err(e) => Users::print_auth_error(e)
         }
     }
 
