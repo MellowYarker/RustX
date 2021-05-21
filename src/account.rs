@@ -14,13 +14,21 @@ pub struct UserAccount {
     pub username: String,
     pub password: String,
     pub id: Option<i32>,
-    pub pending_orders: HashMap<i32, Order>,// Orders that have not been completely filled.
-    pub executed_trades: Vec<FilledOrder>   // Trades that have occurred.
+    /* Quick architecture note about pending_orders.
+     * Format: { "symbol" => {"order_id" => Order} }
+     * This means we can find pending orders by first
+     * looking up the symbol, then the order ID.
+     *  - Solves 2 problems at once
+     *      1. Very easy to check if a pending order has been filled.
+     *      2. Fast access to orders in each market (see validate_order function).
+    * */
+    pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
+    pub executed_trades: Vec<FilledOrder>                       // Trades that have occurred.
 }
 
 impl UserAccount {
     pub fn from(name: &String, password: &String) -> Self {
-        let placed: HashMap<i32, Order> = HashMap::new();
+        let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
         let trades: Vec<FilledOrder> = Vec::new();
         UserAccount {
             username: name.to_string().clone(),
@@ -48,16 +56,20 @@ impl UserAccount {
      *  this user. Otherwise, returns false.
      **/
     pub fn validate_order(&self, order: &Order) -> bool {
-        // TODO: Optimize this, maybe change the data structure. (another hashmap)
-        for (_, pending) in self.pending_orders.iter() {
-            // Same market
-            if order.security == pending.security && order.action != pending.action {
-                if (order.action.as_str() == "buy"  && pending.price <= order.price) ||
-                   (order.action.as_str() == "sell" && order.price <= pending.price)
-               {
-                   return false;
-               }
-            }
+        match self.pending_orders.get(&order.security) {
+            // We only care about the market that `order` is being submitted to.
+            Some(market) => {
+                for (_, pending) in market.iter() {
+                    // If this order will fill a pending order that this account placed:
+                    if  (order.action.ne(&pending.action)) &&
+                        ((order.action.as_str() == "buy"  && pending.price <= order.price) ||
+                        (order.action.as_str() == "sell" && order.price <= pending.price))
+                    {
+                        return false;
+                    }
+                }
+            },
+            None => ()
         }
         return true;
     }
@@ -185,8 +197,10 @@ impl Users {
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
                 println!("\n\tOrders Awaiting Execution");
-                for (_, value) in account.pending_orders.iter() {
-                    println!("\t\t{:?}", value);
+                for (_, market) in account.pending_orders.iter() {
+                    for (_, order) in market.iter() {
+                        println!("\t\t{:?}", order);
+                    }
                 }
                 println!("\n\tExecuted Trades");
                 for order in account.executed_trades.iter() {
@@ -211,6 +225,8 @@ impl Users {
         const BUY: &str = "buy";
         const SELL: &str = "sell";
 
+        let market = account.pending_orders.entry(trades[0].security.clone()).or_insert(HashMap::new());
+
         for trade in trades.iter() {
             let mut id = trade.id;
             let mut update_trade = trade.clone();
@@ -226,13 +242,13 @@ impl Users {
                 }
             }
 
-            match account.pending_orders.get_mut(&id) {
+            // After processing the order, move it to executed trades.
+            match market.get_mut(&id) {
                 Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
-                        // order completely filled
-                        entries_to_remove.push(order.order_id);
+                        entries_to_remove.push(order.order_id); // order completely filled
                     } else {
-                        order.filled += trade.exchanged;
+                        order.filled += trade.exchanged; // order partially filled
                     }
                     account.executed_trades.push(update_trade);
                 },
@@ -242,9 +258,9 @@ impl Users {
             }
         }
 
-        // Remove all elements from account's hashmap that need to be removed.
+        // Remove any completed orders from the accounts pending orders.
         for i in &entries_to_remove {
-            account.pending_orders.remove(&i);
+            market.remove(&i);
         }
     }
 
@@ -275,5 +291,11 @@ impl Users {
         }
         // Case 2: update account who placed order that filled others.
         self.update_single_user(&trades[0].filler_name, &trades, true);
+    }
+
+    pub fn print_all(&self) {
+        for (k, v) in self.users.iter() {
+            self.print_user(&k, &v.password);
+        }
     }
 }
