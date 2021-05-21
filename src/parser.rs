@@ -11,7 +11,7 @@ fn malformed_req(req: &str, req_type: &str) {
        "account" => println!("Hint - format should be: {} create/show username password", req),
        "order"  => println!("Hint - format should be: {} symbol quantity price username password", req),
        "info"   => println!("Hint - format should be: {} symbol", req),
-       "sim"    => println!("Hint - format should be: {} symbol timesteps", req),
+       "sim"    => println!("Hint - format should be: {} trader_count market_count duration", req),
        _        => ()
     }
 }
@@ -91,10 +91,15 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Simulate a market for n time steps
         "simulate" => {
             match words.len() {
-                3 => {
+                4 => {
                     let req: Simulation = Simulation::from( words[0].to_string(),
-                                                            words[1].to_string().to_uppercase(),
+                                                            words[1].to_string().trim()
+                                                                                .parse::<u32>()
+                                                                                .expect("Please enter an integer number of traders!"),
                                                             words[2].to_string().trim()
+                                                                                .parse::<u32>()
+                                                                                .expect("Please enter an integer number of markets!"),
+                                                            words[3].to_string().trim()
                                                                                 .parse::<u32>()
                                                                                 .expect("Please enter an integer number of time steps!"));
                     return Ok(Request::SimReq(req));
@@ -184,21 +189,8 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::SimReq(req) => {
             match &req.action[..] {
                 "simulate" => {
-                    // We have to satisfy the preconditions of the simulation function.
-                    let price = exchange.get_price(&req.symbol);
-                    match price {
-                        Ok(current_price) => {
-                            &exchange.simulate_market(&req, users, current_price);
-                        },
-                        Err(e) => match e {
-                            PriceError::NoMarket => {
-                                println!("There is no market for ${}, so we cannot simulate it.", req.symbol);
-                            },
-                            PriceError::NoTrades => {
-                                println!("This market has not executed any trades. Since there is no price information, we cannot simulate it!");
-                            }
-                        }
-                    }
+                    println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
+                    &exchange.simulate_market(&req, users);
                 },
                 _ => {
                     println!("I don't know how to handle this Simulation request.");

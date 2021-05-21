@@ -61,7 +61,7 @@ impl UserAccount {
             Some(market) => {
                 for (_, pending) in market.iter() {
                     // If this order will fill a pending order that this account placed:
-                    if  (order.action != pending.action) &&
+                    if  (order.action.ne(&pending.action)) &&
                         ((order.action.as_str() == "buy"  && pending.price <= order.price) ||
                         (order.action.as_str() == "sell" && order.price <= pending.price))
                     {
@@ -291,5 +291,11 @@ impl Users {
         }
         // Case 2: update account who placed order that filled others.
         self.update_single_user(&trades[0].filler_name, &trades, true);
+    }
+
+    pub fn print_all(&self) {
+        for (k, v) in self.users.iter() {
+            self.print_user(&k, &v.password);
+        }
     }
 }

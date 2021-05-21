@@ -255,32 +255,42 @@ impl Exchange {
         return new_price;
     }
 
-    /* Allows a user to simulate a market.
-     *
-     * Pre-conditions:
-     *  - The market must exist.
-     *  - Market must have a set price, i.e a trade must have occured.
-     *  - There must be at least 1 order on the market.
-     *
-     * TODO
-     * If these preconditions are not met, we will return an error.
-     * Otherwise, we return the number of trades that took place.
-     * */
-    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, current_price: f64) -> Result<i32, ()> {
-
-        let mut current_price = current_price;
+    /* Simulate trades, currently just for bandwidth testing.
+     * TODO:
+     *      - Maybe simulate individual markets? (This was old behaviour)
+     *          - Could be interesting if we want to try some arbitrage algos later?
+     **/
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users) {
 
         let buy = String::from("buy");
         let sell = String::from("sell");
 
-        let buyer_name = String::from("buyer");
-        let seller_name = String::from("seller");
+        let mut usernames: Vec<String> = Vec::with_capacity(sim.trader_count as usize);
+        let mut i = 0;
+
+        // Fill usernames with user_{num}
+        while i != sim.trader_count {
+            let name = format!("user_{}", i);
+            usernames.push(name);
+            i += 1;
+        }
+
+        i = 0;
+        let mut markets: Vec<String> = Vec::with_capacity(sim.market_count as usize);
+        let mut prices: Vec<f64> = Vec::with_capacity(sim.market_count as usize);
+        while i != sim.market_count {
+            let market_name = format!("market_{}", i);
+            markets.push(market_name);
+            prices.push(10.0); // The price doesn't matter for bandwidth testing
+            i += 1;
+        }
 
         let mut action: &String;
         let mut username: &String;
 
-        users.new_account(UserAccount::from(&buyer_name, &"password".to_string()));
-        users.new_account(UserAccount::from(&seller_name, &"password".to_string()));
+        for name in usernames.iter() {
+            users.new_account(UserAccount::from(name, &"password".to_string()));
+        }
 
         // Simulation loop
         for _time_step in 0..sim.duration {
@@ -291,11 +301,19 @@ impl Exchange {
             let rand: f64 = random!(); // quick 0.0 ~ 1.0 generation
             if rand < 0.5 {
                 action = &buy;
-                username = &buyer_name;
             } else {
                 action = &sell;
-                username = &seller_name;
             }
+            let user_index = random!(0..=sim.trader_count - 1);
+            username = &usernames[user_index as usize];
+
+            let market_index = random!(0..=sim.market_count - 1);
+            let symbol = &markets[market_index as usize];
+
+            let current_price = match self.get_price(symbol) {
+                Ok(price) => price,
+                Err(_) => prices[market_index as usize]
+            };
 
             // Deviate from the current price
             let price_deviation: i8 = random!(-5..=5); // Deviation of +/- 5%
@@ -305,23 +323,15 @@ impl Exchange {
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
             // Create the order and send it to the market
-            let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price, username);
+            let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, username);
 
             if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
                 if account.validate_order(&order) {
-                    // Update price here instead of calling get_price, since that requires
-                    // unnecessary HashMap lookup.
-                    if let Some(p) = self.submit_order_to_market(users, order, username, true) {
-                        current_price = p;
-                    }
+                    self.submit_order_to_market(users, order, username, true);
                 }
             }
         }
-
-        // for (k, v) in users.users.iter() {
-        //     users.print_user(&k, &v.password);
-        // }
-
-        return Ok(0);
+        // If you want prints of each users account, uncomment this.
+        // users.print_all();
     }
 }

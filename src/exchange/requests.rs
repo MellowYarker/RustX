@@ -87,16 +87,18 @@ impl InfoRequest {
 // Allows us to perform simulations on our market
 pub struct Simulation {
     pub action: String,
-    pub symbol: String,
+    pub trader_count: u32,
+    pub market_count: u32,
     pub duration: u32
 }
 
 impl Simulation {
-    pub fn from(action: String, symbol: String, duration: u32) -> Self {
+    pub fn from(action: String, trader_count: u32, market_count: u32, duration: u32) -> Self {
         Simulation {
             action,
-            symbol,
-            duration
+            trader_count,   // number of traders
+            market_count,   // number of markets to trade in
+            duration        // number of trades to make
         }
     }
 }
