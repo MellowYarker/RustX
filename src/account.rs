@@ -62,11 +62,11 @@ impl UserAccount {
                 for (_, pending) in market.iter() {
                     // If this order will fill a pending order that this account placed:
                     if  (order.action != pending.action) &&
-                        (order.action.as_str() == "buy"  && pending.price <= order.price) ||
-                        (order.action.as_str() == "sell" && order.price <= pending.price)
-                   {
-                       return false;
-                   }
+                        ((order.action.as_str() == "buy"  && pending.price <= order.price) ||
+                        (order.action.as_str() == "sell" && order.price <= pending.price))
+                    {
+                        return false;
+                    }
                 }
             },
             None => ()
@@ -197,8 +197,10 @@ impl Users {
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
                 println!("\n\tOrders Awaiting Execution");
-                for (_, value) in account.pending_orders.iter() {
-                    println!("\t\t{:?}", value);
+                for (_, market) in account.pending_orders.iter() {
+                    for (_, order) in market.iter() {
+                        println!("\t\t{:?}", order);
+                    }
                 }
                 println!("\n\tExecuted Trades");
                 for order in account.executed_trades.iter() {
