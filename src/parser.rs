@@ -1,8 +1,44 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
 pub use crate::print_instructions;
 
-// pub mod account;
 use crate::account::{UserAccount, Users};
+
+// IO stuff
+use std::io::BufReader;
+use std::env;
+use std::fs::File;
+
+pub struct Argument<R> {
+    pub interactive: bool,                      // false means read from file, true means interactive mode
+    pub reader: Option<std::io::BufReader<R>>   // The buffer we read from
+}
+
+// Parses the command line arguments.
+// Returns an argument struct on success, or an error string.
+pub fn command_args(mut args: env::Args) -> Result<Argument<std::fs::File>, String> {
+    args.next(); // skip the first argument since it's the program name
+
+    // Default argument
+    let mut argument = Argument {
+        interactive: true,
+        reader: None
+    };
+
+    // Modify the argument depending on user input.
+    match args.next() {
+        Some(filename) => {
+            let file = match File::open(filename) {
+                Ok(f) => f,
+                // TODO: pass the error up call stack?
+                Err(_) => return Err("Failed to open the file!".to_string())
+            };
+            argument.interactive = false;
+            argument.reader = Some(BufReader::new(file));
+        }
+        None => ()
+    }
+    return Ok(argument);
+}
 
 /* Prints some helpful information to the console when input is malformed. */
 fn malformed_req(req: &str, req_type: &str) {

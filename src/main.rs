@@ -5,13 +5,83 @@ pub mod parser;
 pub mod account;
 
 pub use crate::exchange::{Exchange, Market, Request};
-pub use crate::parser::{tokenize_input, service_request};
-
 pub use crate::account::{Users};
 
-use std::io::{self, prelude::*, BufReader};
 use std::env;
-use std::fs::File;
+use std::process;
+use std::io::{self, prelude::*};
+
+fn main() {
+
+    // Our central exchange, everything happens here.
+    let mut exchange: Exchange = Exchange::new();
+    // All our users are stored here.
+    let mut users: Users = Users::new();
+
+    let argument = match parser::command_args(env::args()) {
+        Ok(arg) => arg,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    };
+
+    // Read from file mode
+    if !argument.interactive {
+        for line in argument.reader.unwrap().lines() {
+            match line {
+                Ok(input) => {
+                    let raw = input.clone();
+                    let request: Request = match parser::tokenize_input(input) {
+                        Ok(req) => req,
+                        Err(_)  => {
+                            println!("WARNING: [{}] is not a valid request.", raw);
+                            continue;
+                        }
+                    };
+
+                    // Our input has been validated, and we can now
+                    // attempt to service the request.
+                    println!("Servicing Request: {}", raw);
+                    parser::service_request(request, &mut exchange, &mut users);
+                },
+                Err(_) => return
+            }
+        }
+    } else {
+        // User interface version
+        println!("
+         _       __     __                             __           ____             __ _  __
+         | |     / /__  / /________  ____ ___  ___     / /_____     / __ \\__  _______/ /| |/ /
+         | | /| / / _ \\/ / ___/ __ \\/ __ `__ \\/ _ \\   / __/ __ \\   / /_/ / / / / ___/ __/   /
+         | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/  / /_/ /_/ /  / _, _/ /_/ (__  ) /_/   |
+         |__/|__/\\___/_/\\___/\\____/_/ /_/ /_/\\___/   \\__/\\____/  /_/ |_|\\__,_/____/\\__/_/|_|\n");
+
+
+        print_instructions();
+        loop {
+            println!("\n---What would you like to do?---\n");
+
+            let mut input = String::new();
+
+            io::stdin()
+                .read_line(&mut input)
+                    .expect("Failed to read line");
+
+            let request: Request = match parser::tokenize_input(input) {
+                Ok(req) => req,
+                Err(_)  => {
+                    println!("Please enter a valid request.");
+                    continue;
+                }
+            };
+
+            // Our input has been validated, and we can now
+            // attempt to service the request.
+            parser::service_request(request, &mut exchange, &mut users);
+        }
+    }
+}
 
 pub fn print_instructions() {
     let buy_price = 167.34;
@@ -37,76 +107,4 @@ pub fn print_instructions() {
     println!("\tAccount Requests: account create/show USERNAME PASSWORD");
     println!("\t\tEx: account create bigMoney notHashed\n");
     println!("\tYou can see these instructions at any point by typing help.");
-}
-
-fn main() {
-
-    // Our central exchange, everything happens here.
-    let mut exchange: Exchange = Exchange::new();
-    // All our users are stored here.
-    let mut users: Users = Users::new();
-
-    let args: Vec<String> = env::args().collect();
-
-    // Read from file
-    if args.len() == 2 {
-        let filename = &args[1];
-        let file = File::open(filename).expect("Some error in reading the file.");
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            match line {
-                Ok(input) => {
-                    let keep = input.clone();
-                    let request: Request = match tokenize_input(input) {
-                        // Ok(req) => req,
-                        Ok(req) => {
-                            req
-                        },
-                        Err(_)  => {
-                            println!("Please enter a valid request.");
-                            continue;
-                        }
-                    };
-
-                    // Our input has been validated, and we can now
-                    // attempt to service the request.
-                    println!("Request: {}", keep);
-                    service_request(request, &mut exchange, &mut users);
-                },
-                Err(_) => return
-            }
-        }
-    } else {
-        // User interface version
-        println!("
-         _       __     __                             __           ____             __ _  __
-         | |     / /__  / /________  ____ ___  ___     / /_____     / __ \\__  _______/ /| |/ /
-         | | /| / / _ \\/ / ___/ __ \\/ __ `__ \\/ _ \\   / __/ __ \\   / /_/ / / / / ___/ __/   /
-         | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/  / /_/ /_/ /  / _, _/ /_/ (__  ) /_/   |
-         |__/|__/\\___/_/\\___/\\____/_/ /_/ /_/\\___/   \\__/\\____/  /_/ |_|\\__,_/____/\\__/_/|_|\n");
-
-        print_instructions();
-        loop {
-            println!("\n---What would you like to do?---\n");
-
-            let mut input = String::new(); // mutable
-
-            io::stdin()
-                .read_line(&mut input)
-                    .expect("Failed to read line");
-
-            let request: Request = match tokenize_input(input) {
-                Ok(req) => req,
-                Err(_)  => {
-                    println!("Please enter a valid request.");
-                    continue;
-                }
-            };
-
-            // Our input has been validated, and we can now
-            // attempt to service the request.
-            service_request(request, &mut exchange, &mut users);
-        }
-    }
 }
