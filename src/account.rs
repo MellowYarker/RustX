@@ -40,7 +40,7 @@ impl UserAccount {
     }
 
     // Sets this account's user id, and returns it.
-    pub fn set_id(&mut self, users: &Users) -> i32 {
+    fn set_id(&mut self, users: &Users) -> i32 {
         self.id = Some(users.total + 1);
         return self.id.unwrap();
     }
