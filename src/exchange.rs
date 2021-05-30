@@ -78,6 +78,16 @@ impl Exchange {
             new_price = Some(price);
             stats.update_price(price);
             stats.update_filled_orders(&filled_orders);
+            /* TODO: Updating accounts seems like something that
+             *       shouldn't slow down order execution.
+             *
+             * Market state doesn't depend on users view of the market.
+             * This function is also computationally expensive, I think
+             * the better route is to compute this in a separate thread,
+             * and somehow force sequential access of users accounts
+             * (think mutex locks, and maybe write filled orders to a buffer
+             * in the mean time?)
+             */
             users.update_account_orders(&filled_orders);
             self.extend_past_orders(&mut filled_orders);
         };
