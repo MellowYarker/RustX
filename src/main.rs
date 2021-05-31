@@ -93,16 +93,21 @@ pub fn print_instructions() {
 
     println!("Usage:");
     println!("\tOrders: ACTION(buy/sell) SYMBOL(ticker) QUANTITY PRICE USERNAME PASSWORD");
-    println!("\t\tEx: BUY GME {} {} {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share. Order is placed by {} with password {}.", buy_amount, buy_price, user, pass, buy_amount, buy_price, user, pass);
-    println!("\t\tEx: SELL GME {} {} {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share. Order is placed by {} with password {}.\n", sell_amount, sell_price, user, pass, sell_amount, sell_price, user, pass);
+    println!("\t\tEx: buy GME {} {} {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share. Order is placed by {} with password {}.", buy_amount, buy_price, user, pass, buy_amount, buy_price, user, pass);
+    println!("\t\tEx: sell GME {} {} {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share. Order is placed by {} with password {}.\n", sell_amount, sell_price, user, pass, sell_amount, sell_price, user, pass);
+
+    println!("\tCancel Request: cancel SYMBOL ORDER_ID USERNAME PASSWORD");
+    println!("\t\tEx: cancel AAPL 4 admin pass\t\t<---- Cancels the order with ID 4 in the AAPL market, provided user (admin) placed it.\n");
 
     println!("\tInfo Requests: ACTION SYMBOL(ticker)");
     println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
     println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
     println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.\n");
 
-    println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
-    println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
+    // println!("\tSimulation Requests: simulate SYMBOL(ticker) NUM_ORDERS");
+    println!("\tSimulation Requests: simulate NUM_USERS NUM_MARKETS NUM_ORDERS");
+    // println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
+    println!("\t\tEx: simulate 300 500 10000\t<---- Simulates 10000 random buy/sell orders in 500 markets, with 300 random users.\n");
 
     println!("\tAccount Requests: account create/show USERNAME PASSWORD");
     println!("\t\tEx: account create bigMoney notHashed\n");
