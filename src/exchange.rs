@@ -275,58 +275,57 @@ impl Exchange {
      *       cannot be cancelled.
      * */
     pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users) -> Result<(), String>{
-        // 1. Ensure the order belongs to the user
-        // 2. Remove order from the market
-        // 3. Remove order from users account
         if let Ok(account) = users.get(&(order_to_cancel.username), true) {
+            // 1. Ensure the order belongs to the user
             if let Some(action) = account.user_placed_order(&order_to_cancel.symbol, order_to_cancel.order_id) {
-                // 2. Remove order from the market
                 if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
-                    // TODO: This is literally horrible, AWFUL garbage, but I had to fight the
-                    // borrow checker like there was no tomorrow just to get it to compile, so for
-                    // now we can live with it... I think...
+                    // 2. Remove order from the market
                     match action.as_str() {
-                        // Work on buy heap
                         "buy" => {
-                            // Save all but the ID we are cancelling.
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the buy heap.
                             let new_size = market.buy_orders.len() - 1;
-                            // let new_iter = market.buy_orders.iter().filter(|order| order.order_id != order_to_cancel.order_id);
-                            // let new_iter = market.buy_orders.drain().filter(|order| order.order_id != order_to_cancel.order_id);
-                            let mut temp: BinaryHeap<Order> = BinaryHeap::with_capacity(new_size);
-                            for order in market.buy_orders.iter().filter(|order| order.order_id != order_to_cancel.order_id) {
-                                temp.push(order.clone());
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.buy_orders.drain().filter(|order| order.order_id != order_to_cancel.order_id) {
+                                // temp.push(order.clone()); // Worst case is < O(n) since we preallocate
+                                temp.push(order); // Worst case is < O(n) since we preallocate
                             }
-                            market.buy_orders.clear();
                             market.buy_orders.append(&mut temp);
                         },
-                        // Work on sell heap
                         "sell" => {
-                            // Save all but the ID we are cancelling.
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the sell heap.
                             let new_size = market.sell_orders.len() - 1;
-                            // let new_iter = market.sell_orders.drain().filter(|order| order.0.order_id != order_to_cancel.order_id);
-                            let mut temp: BinaryHeap<Reverse<Order>> = BinaryHeap::with_capacity(new_size);
-                            for order in market.sell_orders.iter().filter(|order| order.0.order_id != order_to_cancel.order_id) {
-                                temp.push(order.clone());
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.sell_orders.drain().filter(|order| order.0.order_id != order_to_cancel.order_id) {
+                                // temp.push(order.clone()); // Worst case is < O(n) since we preallocate
+                                temp.push(order); // Worst case is < O(n) since we preallocate
                             }
-                            market.sell_orders.clear();
                             market.sell_orders.append(&mut temp);
                         },
-                        _ => ()
+                        _ => () // no other possibilities
                     }
 
-                    // 3. TODO: Remove order from users account
+                    // 3. Remove order from users account
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
                     }
+
                     return Ok(());
+
                 } else {
-                    return Err("The market that we want to cancel an order from doesn't exist. This shouldn't happen ever!".to_string());
+                    panic!("The market that we want to cancel an order from doesn't exist.\
+                            This shouldn't ever happen since we've already verified that the user has placed an order in this market!"
+                    );
                 }
             } else {
-                return Err("The order that was requested to be cancelled was not placed by the account that made the request!".to_string());
+                return Err("The order requested to be cancelled was not found in the associated user's pending orders!".to_string());
+                // return Err("The order that was requested to be cancelled was not placed by the account that made the request!".to_string());
             }
         }
-        return Err("Could not find user. This shouldn't happen ever!".to_string());
+        panic!("Could not find the user while cancelling an order.\
+                This shouldn't happen ever, since we've already authenticated the user!"
+        );
     }
 
     /* Simulate trades, currently just for bandwidth testing.
