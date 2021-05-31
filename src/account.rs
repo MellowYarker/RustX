@@ -73,6 +73,22 @@ impl UserAccount {
         }
         return true;
     }
+
+    /* Check if the user with the given username actually placed this order. */
+    pub fn user_placed_order(&self, symbol: &String, id: i32) -> Option<String> {
+        if let Some(market) = self.pending_orders.get(symbol) {
+            if let Some(order) = market.get(&id) {
+                return Some(order.action.clone()); // buy or sell
+            }
+        }
+        return None;
+    }
+
+    pub fn remove_order_from_account(&mut self, symbol: &String, id: i32) {
+        if let Some(market) = self.pending_orders.get_mut(symbol) {
+            market.remove(&id);
+        }
+    }
 }
 
 
@@ -88,14 +104,14 @@ impl Users {
         match err {
             AuthError::NoUser(user) => println!("Authentication failed! User ({}) not found.", user),
             AuthError::BadPassword(message) => if let Some(msg) = message {
-                println!("{}", msg);
+                eprintln!("{}", msg);
             } else {
-                println!("Authentication failed! Incorrect password!")
+                eprintln!("Authentication failed! Incorrect password!")
             }
         }
     }
     /* If the username exists and the password is correct,
-     * we do not return an error.
+     * we return the user account.
      *
      * If the user doesn't exist, or the user exists and the
      * password is incorrect, we return an error.
@@ -142,7 +158,16 @@ impl Users {
      *  - the account exists and
      *  - the password is correct for this user
      */
-    fn get<'a>(&self, username: &'a String, password: &String) -> Result<&UserAccount, AuthError<'a>> {
+    pub fn get<'a>(&self, username: &'a String, authenticated: bool) -> Result<&UserAccount, AuthError<'a>> {
+        if authenticated {
+            match self.users.get(username) {
+                Some(account) => return Ok(account),
+                None => return Err(AuthError::NoUser(username)) // impossible?
+            }
+        }
+        let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
+        return Err(AuthError::BadPassword(Some(err_msg)));
+        /*
         match self.users.get(username) {
             Some(account) => {
                 if *password == account.password {
@@ -154,6 +179,7 @@ impl Users {
                 return Err(AuthError::NoUser(username));
             }
         }
+        */
     }
 
     /* TODO: Return a Result<T, E> instead of Option so we
@@ -165,12 +191,8 @@ impl Users {
     pub fn get_mut<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&mut UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get_mut(username) {
-                Some(account) => {
-                    return Ok(account);
-                },
-                None => {
-                    return Err(AuthError::NoUser(username));
-                }
+                Some(account) => return Ok(account),
+                None => return Err(AuthError::NoUser(username))
             }
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
@@ -192,8 +214,8 @@ impl Users {
      *  - the account exists and
      *  - the password is correct for this user
      */
-    pub fn print_user(&self, username: &String, password: &String) {
-        match self.get(username, password) {
+    pub fn print_user(&self, username: &String, authenticated: bool) {
+        match self.get(username, authenticated) {
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
                 println!("\n\tOrders Awaiting Execution");
@@ -252,9 +274,7 @@ impl Users {
                     }
                     account.executed_trades.push(update_trade);
                 },
-                None => {
-                    account.executed_trades.push(update_trade);
-                }
+                None => account.executed_trades.push(update_trade)
             }
         }
 
@@ -295,7 +315,10 @@ impl Users {
 
     pub fn print_all(&self) {
         for (k, v) in self.users.iter() {
-            self.print_user(&k, &v.password);
+            match self.authenticate(&k, &v.password) {
+                Ok(_) => self.print_user(&k, true),
+                Err(_) => ()
+            }
         }
     }
 }
