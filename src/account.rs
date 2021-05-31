@@ -21,7 +21,7 @@ pub struct UserAccount {
      *  - Solves 2 problems at once
      *      1. Very easy to check if a pending order has been filled.
      *      2. Fast access to orders in each market (see validate_order function).
-    * */
+    **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
     pub executed_trades: Vec<FilledOrder>                       // Trades that have occurred.
 }
@@ -84,6 +84,7 @@ impl UserAccount {
         return None;
     }
 
+    /* Removes a pending order from an account if it exists. */
     pub fn remove_order_from_account(&mut self, symbol: &String, id: i32) {
         if let Some(market) = self.pending_orders.get_mut(symbol) {
             market.remove(&id);
@@ -99,6 +100,28 @@ pub struct Users {
 }
 
 impl Users {
+
+    pub fn new() -> Self {
+        let map: HashMap<String, UserAccount> = HashMap::new();
+        Users {
+            users: map,
+            total: 0
+        }
+    }
+
+    /* If an account with this username exists, do nothing, otherwise
+     * add the account and return it's ID.
+     */
+    pub fn new_account(&mut self, account: UserAccount) -> Option<i32> {
+        if self.users.contains_key(&account.username) {
+            return None;
+        } else {
+            let mut account = account;
+            self.total = account.set_id(&self);
+            self.users.insert(account.username.clone(), account);
+            return Some(self.total);
+        }
+    }
 
     pub fn print_auth_error(err: AuthError) {
         match err {
@@ -132,28 +155,6 @@ impl Users {
         return Err(AuthError::NoUser(username));
     }
 
-    pub fn new() -> Self {
-        let map: HashMap<String, UserAccount> = HashMap::new();
-        Users {
-            users: map,
-            total: 0
-        }
-    }
-
-    /* If an account with this username exists, do nothing, otherwise
-     * add the account and return it's ID.
-     */
-    pub fn new_account(&mut self, account: UserAccount) -> Option<i32> {
-        if self.users.contains_key(&account.username) {
-            return None;
-        } else {
-            let mut account = account;
-            self.total = account.set_id(&self);
-            self.users.insert(account.username.clone(), account);
-            return Some(self.total);
-        }
-    }
-
     /* Returns a reference to a user account if:
      *  - the account exists and
      *  - the password is correct for this user
@@ -167,19 +168,6 @@ impl Users {
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
         return Err(AuthError::BadPassword(Some(err_msg)));
-        /*
-        match self.users.get(username) {
-            Some(account) => {
-                if *password == account.password {
-                    return Ok(account);
-                }
-                return Err(AuthError::BadPassword(None));
-            },
-            None => {
-                return Err(AuthError::NoUser(username));
-            }
-        }
-        */
     }
 
     /* TODO: Return a Result<T, E> instead of Option so we
