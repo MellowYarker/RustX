@@ -237,6 +237,7 @@ impl Exchange {
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                 let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+
                 // Store order on market, and in users account.
                 match &order.action[..] {
                     "buy" => {
@@ -287,7 +288,6 @@ impl Exchange {
                             let new_size = market.buy_orders.len() - 1;
                             let mut temp = BinaryHeap::with_capacity(new_size);
                             for order in market.buy_orders.drain().filter(|order| order.order_id != order_to_cancel.order_id) {
-                                // temp.push(order.clone()); // Worst case is < O(n) since we preallocate
                                 temp.push(order); // Worst case is < O(n) since we preallocate
                             }
                             market.buy_orders.append(&mut temp);
@@ -298,7 +298,6 @@ impl Exchange {
                             let new_size = market.sell_orders.len() - 1;
                             let mut temp = BinaryHeap::with_capacity(new_size);
                             for order in market.sell_orders.drain().filter(|order| order.0.order_id != order_to_cancel.order_id) {
-                                // temp.push(order.clone()); // Worst case is < O(n) since we preallocate
                                 temp.push(order); // Worst case is < O(n) since we preallocate
                             }
                             market.sell_orders.append(&mut temp);
@@ -320,7 +319,6 @@ impl Exchange {
                 }
             } else {
                 return Err("The order requested to be cancelled was not found in the associated user's pending orders!".to_string());
-                // return Err("The order that was requested to be cancelled was not placed by the account that made the request!".to_string());
             }
         }
         panic!("Could not find the user while cancelling an order.\
@@ -404,6 +402,7 @@ impl Exchange {
                 }
             }
         }
+
         // If you want prints of each users account, uncomment this.
         // users.print_all();
     }
