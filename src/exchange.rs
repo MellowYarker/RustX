@@ -2,7 +2,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
 pub mod requests;
-pub use crate::exchange::requests::{Order, InfoRequest, Request, Simulation};
+pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation};
 
 pub mod filled;
 pub use crate::exchange::filled::FilledOrder;
@@ -78,6 +78,16 @@ impl Exchange {
             new_price = Some(price);
             stats.update_price(price);
             stats.update_filled_orders(&filled_orders);
+            /* TODO: Updating accounts seems like something that
+             *       shouldn't slow down order execution.
+             *
+             * Market state doesn't depend on users view of the market.
+             * This function is also computationally expensive, I think
+             * the better route is to compute this in a separate thread,
+             * and somehow force sequential access of users accounts
+             * (think mutex locks, and maybe write filled orders to a buffer
+             * in the mean time?)
+             */
             users.update_account_orders(&filled_orders);
             self.extend_past_orders(&mut filled_orders);
         };
@@ -227,6 +237,7 @@ impl Exchange {
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                 let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+
                 // Store order on market, and in users account.
                 match &order.action[..] {
                     "buy" => {
@@ -255,6 +266,66 @@ impl Exchange {
         return new_price;
     }
 
+    /* Cancel the order in the given market with the given order ID.
+     *
+     * The user has been authenticated by this point, however we still
+     * need to ensure that the order being cancelled was placed by them.
+     *
+     * Note: Just like real exchanges, cancelling an order means cancelling
+     *       whatever *remains* of an order, i.e any fulfilled portion
+     *       cannot be cancelled.
+     * */
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users) -> Result<(), String>{
+        if let Ok(account) = users.get(&(order_to_cancel.username), true) {
+            // 1. Ensure the order belongs to the user
+            if let Some(action) = account.user_placed_order(&order_to_cancel.symbol, order_to_cancel.order_id) {
+                if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
+                    // 2. Remove order from the market
+                    match action.as_str() {
+                        "buy" => {
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the buy heap.
+                            let new_size = market.buy_orders.len() - 1;
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.buy_orders.drain().filter(|order| order.order_id != order_to_cancel.order_id) {
+                                temp.push(order); // Worst case is < O(n) since we preallocate
+                            }
+                            market.buy_orders.append(&mut temp);
+                        },
+                        "sell" => {
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the sell heap.
+                            let new_size = market.sell_orders.len() - 1;
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.sell_orders.drain().filter(|order| order.0.order_id != order_to_cancel.order_id) {
+                                temp.push(order); // Worst case is < O(n) since we preallocate
+                            }
+                            market.sell_orders.append(&mut temp);
+                        },
+                        _ => () // no other possibilities
+                    }
+
+                    // 3. Remove order from users account
+                    if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
+                        account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+                    }
+
+                    return Ok(());
+
+                } else {
+                    panic!("The market that we want to cancel an order from doesn't exist.\
+                            This shouldn't ever happen since we've already verified that the user has placed an order in this market!"
+                    );
+                }
+            } else {
+                return Err("The order requested to be cancelled was not found in the associated user's pending orders!".to_string());
+            }
+        }
+        panic!("Could not find the user while cancelling an order.\
+                This shouldn't happen ever, since we've already authenticated the user!"
+        );
+    }
+
     /* Simulate trades, currently just for bandwidth testing.
      * TODO:
      *      - Maybe simulate individual markets? (This was old behaviour)
@@ -280,7 +351,7 @@ impl Exchange {
         let mut prices: Vec<f64> = Vec::with_capacity(sim.market_count as usize);
         while i != sim.market_count {
             let market_name = format!("market_{}", i);
-            markets.push(market_name);
+            markets.push(market_name.to_uppercase());
             prices.push(10.0); // The price doesn't matter for bandwidth testing
             i += 1;
         }
@@ -331,6 +402,7 @@ impl Exchange {
                 }
             }
         }
+
         // If you want prints of each users account, uncomment this.
         // users.print_all();
     }

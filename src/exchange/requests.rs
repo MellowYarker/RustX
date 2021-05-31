@@ -103,8 +103,15 @@ impl Simulation {
     }
 }
 
+pub struct CancelOrder {
+    pub symbol: String,
+    pub order_id: i32,
+    pub username: String,
+}
+
 pub enum Request {
     OrderReq(Order, String, String),// first string is username, second password
+    CancelReq(CancelOrder, String), // string is password
     InfoReq(InfoRequest),
     SimReq(Simulation),
     UserReq(UserAccount, String)    // Account followed by action

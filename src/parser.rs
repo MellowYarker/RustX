@@ -1,17 +1,54 @@
-pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
+pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
 pub use crate::print_instructions;
 
-// pub mod account;
 use crate::account::{UserAccount, Users};
+
+// IO stuff
+use std::io::BufReader;
+use std::env;
+use std::fs::File;
+
+pub struct Argument<R> {
+    pub interactive: bool,                      // false means read from file, true means interactive mode
+    pub reader: Option<std::io::BufReader<R>>   // The buffer we read from
+}
+
+// Parses the command line arguments.
+// Returns an argument struct on success, or an error string.
+pub fn command_args(mut args: env::Args) -> Result<Argument<std::fs::File>, String> {
+    args.next(); // skip the first argument since it's the program name
+
+    // Default argument
+    let mut argument = Argument {
+        interactive: true,
+        reader: None
+    };
+
+    // Modify the argument depending on user input.
+    match args.next() {
+        Some(filename) => {
+            let file = match File::open(filename) {
+                Ok(f) => f,
+                // TODO: pass the error up call stack?
+                Err(_) => return Err("Failed to open the file!".to_string())
+            };
+            argument.interactive = false;
+            argument.reader = Some(BufReader::new(file));
+        }
+        None => ()
+    }
+    return Ok(argument);
+}
 
 /* Prints some helpful information to the console when input is malformed. */
 fn malformed_req(req: &str, req_type: &str) {
-    println!("\nMalformed \"{}\" request!", req);
+    eprintln!("\nMalformed \"{}\" request!", req);
     match req_type {
-       "account" => println!("Hint - format should be: {} create/show username password", req),
-       "order"  => println!("Hint - format should be: {} symbol quantity price username password", req),
-       "info"   => println!("Hint - format should be: {} symbol", req),
-       "sim"    => println!("Hint - format should be: {} trader_count market_count duration", req),
+       "account" => eprintln!("Hint - format should be: {} create/show username password", req),
+       "order"  => eprintln!("Hint - format should be: {} symbol quantity price username password", req),
+       "cancel"  => eprintln!("Hint - format should be: {} symbol order_id username password", req),
+       "info"   => eprintln!("Hint - format should be: {} symbol", req),
+       "sim"    => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
        _        => ()
     }
 }
@@ -63,8 +100,8 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                                              &words[4].to_string()
                                             );
                     if order.quantity <= 0 || order.price <= 0.0 {
-                        println!("Malformed \"{}\" request!", words[0]);
-                        println!("Make sure the quantity and price are greater than 0!");
+                        eprintln!("Malformed \"{}\" request!", words[0]);
+                        eprintln!("Make sure the quantity and price are greater than 0!");
                         return Err(());
                     }
                     return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
@@ -75,6 +112,23 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 }
             }
         },
+        "cancel" => {
+            match words.len() {
+                5 => {
+                    let req = CancelOrder {
+                        symbol: words[1].to_string().to_uppercase(),
+                        order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we don't need to panic here.
+                        username: words[3].to_string()
+                    };
+
+                    return Ok(Request::CancelReq(req, words[4].to_string()));
+                },
+                _ => {
+                    malformed_req(&words[0], &words[0]);
+                    return Err(());
+                }
+            }
+        }
         // request price info, current market info, or past market info
         "price" | "show" | "history" =>  {
             match words.len() {
@@ -117,7 +171,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         },
         // Unknown input
         _ => {
-            println!("I don't understand the action type \'{}\'.", words[0]);
+            eprintln!("I don't understand the action type \'{}\'.", words[0]);
             return Err(());
         }
     }
@@ -136,15 +190,27 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                                 &exchange.submit_order_to_market(users, order.clone(), &username, true);
                                 &exchange.show_market(&order.security);
                             } else {
-                                println!("Order could not be placed. This order would fill one of your currently pending orders!");
+                                eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
                             }
                         },
                         Err(e) => Users::print_auth_error(e)
                     }
                 },
                 // Handle unknown action!
-                _ => println!("Sorry, I do not know how to perform {:?}", order)
+                _ => eprintln!("Sorry, I do not know how to perform {:?}", order)
             }
+        },
+        Request::CancelReq(order_to_cancel, password) => {
+            match users.authenticate(&(order_to_cancel.username), &password) {
+                Ok(_) => {
+                    match exchange.cancel_order(&order_to_cancel, users) {
+                        Ok(_) => println!("Order successfully cancelled."),
+                        Err(e) => eprintln!("{}", e)
+                    }
+                },
+                Err(e) => Users::print_auth_error(e)
+            }
+
         },
         Request::InfoReq(req) => {
             match &req.action[..] {
@@ -182,7 +248,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     }
                 },
                 _ => {
-                    println!("I don't know how to handle this information request.");
+                    eprintln!("I don't know how to handle this information request.");
                 }
             }
         },
@@ -193,7 +259,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     &exchange.simulate_market(&req, users);
                 },
                 _ => {
-                    println!("I don't know how to handle this Simulation request.");
+                    eprintln!("I don't know how to handle this Simulation request.");
                 }
             }
         },
@@ -208,8 +274,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 "show" => {
                     match users.authenticate(&account.username, &account.password) {
                         Ok(_) => {
-                            // TODO: Figure out authentication because this is dumb.
-                            users.print_user(&account.username, &account.password);
+                            users.print_user(&account.username, true);
                         },
                         Err(e) => Users::print_auth_error(e)
                     }
