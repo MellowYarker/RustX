@@ -2,7 +2,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
 pub mod requests;
-pub use crate::exchange::requests::{Order, InfoRequest, Request, Simulation};
+pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation};
 
 pub mod filled;
 pub use crate::exchange::filled::FilledOrder;
@@ -12,6 +12,8 @@ pub use crate::exchange::stats::SecStat;
 
 pub mod market;
 pub use crate::exchange::market::Market;
+
+pub use crate::account::{UserAccount, Users};
 
 // Error types for price information.
 pub enum PriceError {
@@ -54,7 +56,7 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
         let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
 
         // Update the counters and the price
@@ -76,6 +78,17 @@ impl Exchange {
             new_price = Some(price);
             stats.update_price(price);
             stats.update_filled_orders(&filled_orders);
+            /* TODO: Updating accounts seems like something that
+             *       shouldn't slow down order execution.
+             *
+             * Market state doesn't depend on users view of the market.
+             * This function is also computationally expensive, I think
+             * the better route is to compute this in a separate thread,
+             * and somehow force sequential access of users accounts
+             * (think mutex locks, and maybe write filled orders to a buffer
+             * in the mean time?)
+             */
+            users.update_account_orders(&filled_orders);
             self.extend_past_orders(&mut filled_orders);
         };
 
@@ -172,13 +185,21 @@ impl Exchange {
 
     /* Add an order to the security's order list.
      * If the security isn't in the HashMap, create it.
+     * Assumes user has already been authenticated.
      *
-     * Returns Some(price) if trade occurred, else None.
+     * Returns Some(new_price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, order: Order) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool) -> Option<f64> {
 
+        // Mutable reference to the account associated with given username.
+        let account = match users.get_mut(username, auth) {
+            Ok(acc) => acc,
+            Err(e) => {
+                Users::print_auth_error(e);
+                return None;
+            }
+        };
         let mut order: Order = order;
-
         let mut new_price = None; // new price if trade occurs
 
         // Set the order_id for the order.
@@ -190,7 +211,8 @@ impl Exchange {
                 // Try to fill the new order with existing orders on the market.
                 let filled_orders = market.fill_existing_orders(&mut order);
 
-                // Add the new order to the buy/sell heap if it wasn't completely filled
+                // Add the new order to the buy/sell heap if it wasn't completely filled,
+                // as well as the users account.
                 if order.quantity != order.filled {
                     match &order.action[..] {
                         "buy" => {
@@ -202,18 +224,21 @@ impl Exchange {
                         },
                         _ => ()
                     }
-                } else {
-                    // TEST SPEED
-                    // println!("The order has been filled!");
+
+                    // Add to this accounts pending orders.
+                    let current_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+                    current_market.insert(order.order_id, order.clone());
                 }
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, filled_orders);
+                new_price = self.update_state(&order, users, filled_orders);
             },
             None => {
-                // Entry doesn't exist, create it.
+                // The market doesn't exist, create it.
                 // buy is a max heap, sell is a min heap.
                 let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                 let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+
+                // Store order on market, and in users account.
                 match &order.action[..] {
                     "buy" => {
                         buy_heap.push(order.clone());
@@ -225,8 +250,13 @@ impl Exchange {
                     _ => ()
                 };
 
+                // Create the new market
                 let new_market = Market::new(buy_heap, sell_heap);
                 self.live_orders.insert(order.security.clone(), new_market);
+
+                // Add the symbol name and order to this accounts pending orders.
+                let new_account_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+                new_account_market.insert(order.order_id, order.clone());
 
                 // Since this is the first order, initialize the stats for this security.
                 self.init_stats(&order);
@@ -236,33 +266,102 @@ impl Exchange {
         return new_price;
     }
 
-    /* Allows a user to simulate a market.
+    /* Cancel the order in the given market with the given order ID.
      *
-     * Pre-conditions:
-     *  - The market must exist.
-     *  - Market must have a set price, i.e a trade must have occured.
-     *  - There must be at least 1 order on the market.
+     * The user has been authenticated by this point, however we still
+     * need to ensure that the order being cancelled was placed by them.
      *
-     * TODO
-     * If these preconditions are not met, we will return an error.
-     * Otherwise, we return the number of trades that took place.
+     * Note: Just like real exchanges, cancelling an order means cancelling
+     *       whatever *remains* of an order, i.e any fulfilled portion
+     *       cannot be cancelled.
      * */
-    pub fn simulate_market(&mut self, sim: &Simulation) -> Result<i32, ()> {
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users) -> Result<(), String>{
+        if let Ok(account) = users.get(&(order_to_cancel.username), true) {
+            // 1. Ensure the order belongs to the user
+            if let Some(action) = account.user_placed_order(&order_to_cancel.symbol, order_to_cancel.order_id) {
+                if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
+                    // 2. Remove order from the market
+                    match action.as_str() {
+                        "buy" => {
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the buy heap.
+                            let new_size = market.buy_orders.len() - 1;
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.buy_orders.drain().filter(|order| order.order_id != order_to_cancel.order_id) {
+                                temp.push(order); // Worst case is < O(n) since we preallocate
+                            }
+                            market.buy_orders.append(&mut temp);
+                        },
+                        "sell" => {
+                            // Move all the orders except the one we're cancelling to a new heap,
+                            // then move it back to the sell heap.
+                            let new_size = market.sell_orders.len() - 1;
+                            let mut temp = BinaryHeap::with_capacity(new_size);
+                            for order in market.sell_orders.drain().filter(|order| order.0.order_id != order_to_cancel.order_id) {
+                                temp.push(order); // Worst case is < O(n) since we preallocate
+                            }
+                            market.sell_orders.append(&mut temp);
+                        },
+                        _ => () // no other possibilities
+                    }
 
-        let mut current_price: f64;
+                    // 3. Remove order from users account
+                    if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
+                        account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+                    }
 
-        match self.get_price(&sim.symbol) {
-            Ok(p) => {
-                current_price = p;
-            },
-            // TODO better error handling
-            Err(_) => return Err(())
-        };
+                    return Ok(());
+
+                } else {
+                    panic!("The market that we want to cancel an order from doesn't exist.\
+                            This shouldn't ever happen since we've already verified that the user has placed an order in this market!"
+                    );
+                }
+            } else {
+                return Err("The order requested to be cancelled was not found in the associated user's pending orders!".to_string());
+            }
+        }
+        panic!("Could not find the user while cancelling an order.\
+                This shouldn't happen ever, since we've already authenticated the user!"
+        );
+    }
+
+    /* Simulate trades, currently just for bandwidth testing.
+     * TODO:
+     *      - Maybe simulate individual markets? (This was old behaviour)
+     *          - Could be interesting if we want to try some arbitrage algos later?
+     **/
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users) {
 
         let buy = String::from("buy");
         let sell = String::from("sell");
 
+        let mut usernames: Vec<String> = Vec::with_capacity(sim.trader_count as usize);
+        let mut i = 0;
+
+        // Fill usernames with user_{num}
+        while i != sim.trader_count {
+            let name = format!("user_{}", i);
+            usernames.push(name);
+            i += 1;
+        }
+
+        i = 0;
+        let mut markets: Vec<String> = Vec::with_capacity(sim.market_count as usize);
+        let mut prices: Vec<f64> = Vec::with_capacity(sim.market_count as usize);
+        while i != sim.market_count {
+            let market_name = format!("market_{}", i);
+            markets.push(market_name.to_uppercase());
+            prices.push(10.0); // The price doesn't matter for bandwidth testing
+            i += 1;
+        }
+
         let mut action: &String;
+        let mut username: &String;
+
+        for name in usernames.iter() {
+            users.new_account(UserAccount::from(name, &"password".to_string()));
+        }
 
         // Simulation loop
         for _time_step in 0..sim.duration {
@@ -276,6 +375,16 @@ impl Exchange {
             } else {
                 action = &sell;
             }
+            let user_index = random!(0..=sim.trader_count - 1);
+            username = &usernames[user_index as usize];
+
+            let market_index = random!(0..=sim.market_count - 1);
+            let symbol = &markets[market_index as usize];
+
+            let current_price = match self.get_price(symbol) {
+                Ok(price) => price,
+                Err(_) => prices[market_index as usize]
+            };
 
             // Deviate from the current price
             let price_deviation: i8 = random!(-5..=5); // Deviation of +/- 5%
@@ -285,15 +394,16 @@ impl Exchange {
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
             // Create the order and send it to the market
-            let order = Order::from(action.to_string(), sim.symbol.clone(), shares, new_price);
+            let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, username);
 
-            // Update price here instead of calling get_price, since that requires
-            // unnecessary HashMap lookup.
-            if let Some(p) = self.submit_order_to_market(order) {
-                current_price = p;
+            if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
+                if account.validate_order(&order) {
+                    self.submit_order_to_market(users, order, username, true);
+                }
             }
         }
 
-        return Ok(0);
+        // If you want prints of each users account, uncomment this.
+        // users.print_all();
     }
 }

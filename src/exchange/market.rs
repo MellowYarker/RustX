@@ -60,16 +60,6 @@ impl Market {
                     // Add this trade
                     highest_bid.filled += amount_traded;
                     filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0, &highest_bid, amount_traded));
-
-                    // If the newly placed order was consumed
-                    /*
-                    // Since the sell has been filled, add it to the new vector.
-                    if lowest_sell_remaining == highest_bid_remaining {
-                        // TODO: Do we really want to do this in this way?
-                        // filled_orders.push(highest_bid.clone());
-                        filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &update_lowest, amount_traded));
-                    }
-                    */
                 } else {
                     // The buy order was completely filled.
                     let amount_traded = highest_bid_remaining;
@@ -134,14 +124,6 @@ impl Market {
 
                     // Add the updated buy to the Vector we return
                     filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &lowest_offer, amount_traded));
-
-                    /*
-                    // If the newly placed order was consumed
-                    if lowest_sell_remaining == highest_bid_remaining {
-                        // TODO: Do we really want to do this in this way?
-                        filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer, &update_highest, amount_traded));
-                    }
-                    */
                 } else {
                     // The sell order was completely filled.
                     let amount_traded = lowest_sell_remaining;

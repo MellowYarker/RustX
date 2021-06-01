@@ -1,9 +1,56 @@
-pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, Request, PriceError};
+pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
+pub use crate::print_instructions;
+
+use crate::account::{UserAccount, Users};
+
+// IO stuff
+use std::io::BufReader;
+use std::env;
+use std::fs::File;
+
+pub struct Argument<R> {
+    pub interactive: bool,                      // false means read from file, true means interactive mode
+    pub reader: Option<std::io::BufReader<R>>   // The buffer we read from
+}
+
+// Parses the command line arguments.
+// Returns an argument struct on success, or an error string.
+pub fn command_args(mut args: env::Args) -> Result<Argument<std::fs::File>, String> {
+    args.next(); // skip the first argument since it's the program name
+
+    // Default argument
+    let mut argument = Argument {
+        interactive: true,
+        reader: None
+    };
+
+    // Modify the argument depending on user input.
+    match args.next() {
+        Some(filename) => {
+            let file = match File::open(filename) {
+                Ok(f) => f,
+                // TODO: pass the error up call stack?
+                Err(_) => return Err("Failed to open the file!".to_string())
+            };
+            argument.interactive = false;
+            argument.reader = Some(BufReader::new(file));
+        }
+        None => ()
+    }
+    return Ok(argument);
+}
 
 /* Prints some helpful information to the console when input is malformed. */
-fn malformed_req(req: &String) {
-    println!("\nMalformed \"{}\" request!", req);
-    println!("Hint - format should be: {} symbol", req);
+fn malformed_req(req: &str, req_type: &str) {
+    eprintln!("\nMalformed \"{}\" request!", req);
+    match req_type {
+       "account"    => eprintln!("Hint - format should be: {} create/show username password", req),
+       "order"      => eprintln!("Hint - format should be: {} symbol quantity price username password", req),
+       "cancel"     => eprintln!("Hint - format should be: {} symbol order_id username password", req),
+       "info"       => eprintln!("Hint - format should be: {} symbol", req),
+       "sim"        => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
+       _            => ()
+    }
 }
 
 /* Takes a string from stdin, and turns it into a Request Enum.
@@ -28,101 +75,122 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 
     // The first entry should be the action type.
     match &(words[0])[..] {
+        // Create a new user
+        "account" => {
+            if let 4 = words.len() {
+                let action = words[1].to_string().clone();
+                let user = UserAccount::from(&words[2], &words[3]);
+                return Ok(Request::UserReq(user, action));
+            } else {
+                malformed_req(&words[0], &words[0]);
+                return Err(());
+            }
+        }
         // Order
         "buy" | "sell" => {
-            match words.len() {
-                4 => {
-                    let order = Order::from( words[0].to_string(),
-                                             words[1].to_string().to_uppercase(),
-                                             words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
-                                             words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!")
-                                            );
-                    if order.quantity <= 0 || order.price <= 0.0 {
-                        println!("Malformed \"{}\" request!", words[0]);
-                        println!("Make sure the quantity and price are greater than 0!");
-                        return Err(());
-                    }
-                    return Ok(Request::OrderReq(order));
-                },
-                _ => {
-                    println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} symbol quantity price", words[0]);
+            if let 6 = words.len() {
+                let order = Order::from( words[0].to_string(),
+                                         words[1].to_string().to_uppercase(),
+                                         words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
+                                         words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
+                                         &words[4].to_string()
+                                        );
+                if order.quantity <= 0 || order.price <= 0.0 {
+                    eprintln!("Malformed \"{}\" request!", words[0]);
+                    eprintln!("Make sure the quantity and price are greater than 0!");
                     return Err(());
                 }
+                return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
+            } else {
+                malformed_req(&words[0], "order");
+                return Err(());
             }
         },
+        "cancel" => {
+            if let 5 = words.len() {
+                let req = CancelOrder {
+                    symbol: words[1].to_string().to_uppercase(),
+                    order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we don't need to panic here.
+                    username: words[3].to_string()
+                };
+
+                return Ok(Request::CancelReq(req, words[4].to_string()));
+            } else {
+                malformed_req(&words[0], &words[0]);
+                return Err(());
+            }
+        }
         // request price info, current market info, or past market info
         "price" | "show" | "history" =>  {
-            match words.len() {
-                2 => {
-                    let req: InfoRequest = InfoRequest::new(words[0].to_string(), words[1].to_string().to_uppercase());
-                    return Ok(Request::InfoReq(req));
-                },
-                _ =>  {
-                    malformed_req(&words[0]);
-                    return Err(());
-                }
+            if let 2 = words.len() {
+                let req: InfoRequest = InfoRequest::new(words[0].to_string(), words[1].to_string().to_uppercase());
+                return Ok(Request::InfoReq(req));
+            } else {
+                malformed_req(&words[0], "info");
+                return Err(());
             }
         },
         // Simulate a market for n time steps
         "simulate" => {
-            match words.len() {
-                3 => {
-                    let req: Simulation = Simulation::from( words[0].to_string(),
-                                                            words[1].to_string().to_uppercase(),
-                                                            words[2].to_string().trim()
-                                                                                .parse::<u32>()
-                                                                                .expect("Please enter an integer number of time steps!"));
-                    return Ok(Request::SimReq(req));
-                },
-                _ => {
-                    println!("Malformed \"{}\" request!", words[0]);
-                    println!("Hint - format should be: {} symbol timesteps", words[0]);
-                    return Err(());
-                }
+            if let 4 = words.len() {
+                let req: Simulation = Simulation::from( words[0].to_string(),
+                                                        words[1].to_string().trim().parse::<u32>().expect("Please enter an integer number of traders!"),
+                                                        words[2].to_string().trim().parse::<u32>().expect("Please enter an integer number of markets!"),
+                                                        words[3].to_string().trim().parse::<u32>().expect("Please enter an integer number of time steps!")
+                                                      );
+                return Ok(Request::SimReq(req));
+            } else {
+                malformed_req(&words[0], "sim");
+                return Err(());
             }
         },
         // request instructions
         "help" => {
-            let buy_price = 167.34;
-            let buy_amount = 24;
-            let sell_price = 999.85;
-            let sell_amount = 12;
-            println!("Usage:");
-            println!("\tOrders: ACTION SYMBOL(ticker) QUANTITY PRICE");
-            println!("\t\tEx: BUY GME {} {}\t<---- Sends a buy order for {} shares of GME at ${} a share.", buy_amount, buy_price, buy_amount, buy_price);
-            println!("\t\tEx: SELL GME {} {}\t<---- Sends a sell order for {} shares of GME at ${} a share.\n", sell_amount, sell_price, sell_amount, sell_price);
-            println!("\tInfo Requests: ACTION SYMBOL(ticker)");
-            println!("\t\tEx: price GME\t\t<---- gives latest price an order was filled at.");
-            println!("\t\tEx: show GME\t\t<---- shows statistics for the GME market.");
-            println!("\t\tEx: history GME\t\t<---- shows past orders that were filled in the GME market.");
-            println!("\t\tEx: simulate GME 100\t<---- Simulates 100 random buy/sell orders in the GME market.\n");
-
+            print_instructions();
             return Err(()); // We return an empty error only because there's no more work to do.
         },
         // Unknown input
         _ => {
-            println!("I don't understand the action type \'{}\'.", words[0]);
+            eprintln!("I don't understand the action type \'{}\'.", words[0]);
             return Err(());
         }
     }
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange) {
-
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
     match request {
-        Request::OrderReq(order) => {
+        Request::OrderReq(order, username, password) => {
             match &order.action[..] {
                 "buy" | "sell" => {
-                    // Put the order on the market, it might get filled immediately,
-                    // if not it will sit on the market until another order fills it.
-                    &exchange.submit_order_to_market(order.clone());
-                    &exchange.show_market(&order.security);
+                    // Try to get the account
+                    match users.authenticate(&username, &password) {
+                        Ok(account) => {
+                            if account.validate_order(&order) {
+                                &exchange.submit_order_to_market(users, order.clone(), &username, true);
+                                &exchange.show_market(&order.security);
+                            } else {
+                                eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
+                            }
+                        },
+                        Err(e) => Users::print_auth_error(e)
+                    }
                 },
                 // Handle unknown action!
-                _ => println!("Sorry, I do not know how to perform {:?}", order)
+                _ => eprintln!("Sorry, I do not know how to perform {:?}", order)
             }
+        },
+        Request::CancelReq(order_to_cancel, password) => {
+            match users.authenticate(&(order_to_cancel.username), &password) {
+                Ok(_) => {
+                    match exchange.cancel_order(&order_to_cancel, users) {
+                        Ok(_) => println!("Order successfully cancelled."),
+                        Err(e) => eprintln!("{}", e)
+                    }
+                },
+                Err(e) => Users::print_auth_error(e)
+            }
+
         },
         Request::InfoReq(req) => {
             match &req.action[..] {
@@ -160,32 +228,38 @@ pub fn service_request(request: Request, exchange: &mut Exchange) {
                     }
                 },
                 _ => {
-                    println!("I don't know how to handle this information request.");
+                    eprintln!("I don't know how to handle this information request.");
                 }
             }
         },
         Request::SimReq(req) => {
             match &req.action[..] {
                 "simulate" => {
-                    // We have to satisfy the preconditions of the simulation function.
-                    let price = exchange.get_price(&req.symbol);
-                    match price {
-                        Ok(_) => {
-                            &exchange.simulate_market(&req);
-                        },
-                        Err(e) => match e {
-                            PriceError::NoMarket => {
-                                println!("There is no market for ${}, so we cannot simulate it.", req.symbol);
-                            },
-                            PriceError::NoTrades => {
-                                println!("This market has not executed any trades. Since there is no price information, we cannot simulate it!");
-                            }
-                        }
-                    }
+                    println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
+                    &exchange.simulate_market(&req, users);
                 },
                 _ => {
-                    println!("I don't know how to handle this Simulation request.");
+                    eprintln!("I don't know how to handle this Simulation request.");
                 }
+            }
+        },
+        Request::UserReq(account, action) => {
+            match &action[..] {
+                "create" => {
+                   match users.new_account(account) {
+                       Some(id) => println!("Successfully created new account with id {}.", id),
+                       None => println!("Sorry, that username is already taken!")
+                   }
+                },
+                "show" => {
+                    match users.authenticate(&account.username, &account.password) {
+                        Ok(_) => {
+                            users.print_user(&account.username, true);
+                        },
+                        Err(e) => Users::print_auth_error(e)
+                    }
+                },
+                _ => println!("Sorry I do not know how to handle that account request.")
             }
         }
     }
