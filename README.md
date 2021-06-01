@@ -1,25 +1,28 @@
 # RustX
-A simple text based stock exchange written in Rust
+A simple (100% in-memory) text based stock exchange written in Rust
 
 ## Setup
-Clone the repository, make sure you have Cargo installed. To build and execute the program, type `cargo run`.
+Clone the repository, make sure you have Cargo installed. To build and execute the program, type `cargo run --release` for interactive mode.
 
 ## Usage
-The instructions will appear when the program starts running, but briefly, there are 3 types of **Requests**: *Order* requests, *Information* requests, and a *Simulation* request.
+The instructions will appear when the program starts running, but briefly, there are 5 types of **Requests**: *Order* requests, *Cancel* request, *Information* requests, a *Simulation* request, and *Account* requests.
 
-- **Order requests**: These consist of *buy* and *sell* orders, and have the form `action symbol quantity price`, where symbol is the stock ticker (like `TSLA` for tesla).
+- **Order requests**: These consist of *buy* and *sell* orders, and have the form `action symbol quantity price username password`, where symbol is the stock ticker (like `TSLA` for tesla).
+- **Cancel request**: This request allows a user to cancel an order that they had previously placed. It looks like: `cancel symbol order_id username password`.
+  - Note that like in a real exchange, a user can only cancel the non-filled portion of the order.
 - **Info requests**: These consist of basic information requests and have the following format: `action symbol`. The following info requests are currently supported,
   - *Price* request, which returns the latest price at which a trade occured, or helpful messages that inform the user that the market either doesn't exist, or that no trades have occured yet.
-  - *Current market view* request, which shows the current buy and sell orders in the market.
-  - *History* requests, which shows all the past trades that were filled in the market.
+  - *Current market view* request, which shows the most relevant buy and sell orders in the market.
+  - *History* request, which shows all the past trades that were executed in the market.
 - **Simulation request**: This request lets you simulate random market activity.
-  - Format:`simulate symbol num_trades`.
-  - There is a 50% chance of buying, 50% chance of selling. The price of each order deviates +/- 5% from the last traded price, and the number of shares is randomly chosen from a short range.
+  - Format:`simulate num_users num_markets num_orders`.
+  - There is a 50% chance of buying, 50% chance of selling. The price of each order deviates +/- 5% from the last traded price, and the number of shares is randomly chosen from a short range. This simulation format lets us test likely exchange activity that could occur in the real world.
+- **Account requests**: These requests allow you to create a new user or see the activity of a user (*authentication required*).
 
-If you don't want to use the interactive version of the program, you can write a simple text file with one request per line, then pass the file as a command line argument `cargo run /path/to/input.txt`.
+If you don't want to use the interactive version of the program, you can write a simple text file with one request per line, then pass the file as a command line argument `cargo run --release /path/to/input.txt`.
 
 
-## Demo
+## Demo [outdated]
 In this demo, 3 `buy` orders are placed and subsequently sorted by price, then 4 `sell` orders are placed. Some of these `sell` orders consume existing buy orders and then disappear, others consume buy orders and then remain on the market.
 
 ![Demo gif](./media/edit-exchange.gif)
@@ -27,8 +30,19 @@ In this demo, 3 `buy` orders are placed and subsequently sorted by price, then 4
 
 ## Technical Details
 ### Changelog
+#### 5 - Adding Accounts (Most Recent)
+The branch **WHY** (as in, *why am I still working on this*), in which I implemented and integrated accounts everywhere, has significantly changed the structure of the program. In fact, the previous performance numbers are more or less irrelevant now, since our simulation has been rewritten.
 
-#### 4 - Refactoring (Most Recent)
+**Before WHY**:
+We had one account buy shares (in one market) and another account sell shares (in the same market). These two accounts traded with each other *n* times, where *n* was large.
+This was no longer practical after integrating user accounts, since each time a user submits an order, we have to compare that order with all the other orders that user placed in the market to ensure they won't fulfill one of their own pending orders. This is computationally expensive when a user has a lot of orders in one pending market, and I realized that I could either make more program much more complicated, or recognize that the simulation wasn't very realistic.
+
+**New Simulation**:
+We have many accounts both buying and selling in many markets.
+
+Because of this change, we can no longer measure performance in the way we did before, as we now have two independent variables (excluding values determined randomly during sim runtime like price, order type, which account will place an order, the market to operate in, etc).
+
+#### 4 - Refactoring
 Managed to nearly 2x bandwidth, we're at *1 million orders in < 7 sec* now, but more on that later.
 
 I split the project up into modules to keep my brain from melting, it turned out to be a good call because I was able to do things less so in a Java way and more so in a Rust way; many thanks to [this reddit thread](https://www.reddit.com/r/rust/comments/5ny09j/tips_to_not_fight_the_borrow_checker/dcf6a59/?context=8&depth=9). Modularizing made moving methods from one struct to another less of a hassle, which made the borrow checker happy. It also made me happy, as I was able to [delete redundant HashMap look-ups](https://github.com/MellowYarker/RustX/pull/2/commits/650bc475bfe6f7e021e55ec266aaf135fa9c8fd5#diff-b87f119a5fecd39dd845d0b76bccdec12291ad21571b3a028007e5ebda2fe5bcR220), pass references rather than copies of data as function args, and use `peek` and `peek_mut` rather than `push` and `pop` for the BinaryHeap.
