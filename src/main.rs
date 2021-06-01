@@ -70,10 +70,7 @@ fn main() {
 
             let request: Request = match parser::tokenize_input(input) {
                 Ok(req) => req,
-                Err(_)  => {
-                    println!("Please enter a valid request.");
-                    continue;
-                }
+                Err(_)  => continue
             };
 
             // Our input has been validated, and we can now

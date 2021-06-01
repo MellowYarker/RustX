@@ -44,12 +44,12 @@ pub fn command_args(mut args: env::Args) -> Result<Argument<std::fs::File>, Stri
 fn malformed_req(req: &str, req_type: &str) {
     eprintln!("\nMalformed \"{}\" request!", req);
     match req_type {
-       "account" => eprintln!("Hint - format should be: {} create/show username password", req),
-       "order"  => eprintln!("Hint - format should be: {} symbol quantity price username password", req),
-       "cancel"  => eprintln!("Hint - format should be: {} symbol order_id username password", req),
-       "info"   => eprintln!("Hint - format should be: {} symbol", req),
-       "sim"    => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
-       _        => ()
+       "account"    => eprintln!("Hint - format should be: {} create/show username password", req),
+       "order"      => eprintln!("Hint - format should be: {} symbol quantity price username password", req),
+       "cancel"     => eprintln!("Hint - format should be: {} symbol order_id username password", req),
+       "info"       => eprintln!("Hint - format should be: {} symbol", req),
+       "sim"        => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
+       _            => ()
     }
 }
 
@@ -77,91 +77,71 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
     match &(words[0])[..] {
         // Create a new user
         "account" => {
-            match words.len() {
-                4 => {
-                    let action = words[1].to_string().clone();
-                    let user = UserAccount::from(&words[2], &words[3]);
-                    return Ok(Request::UserReq(user, action));
-                },
-                _ => {
-                    malformed_req(&words[0], &words[0]);
-                    return Err(());
-                }
+            if let 4 = words.len() {
+                let action = words[1].to_string().clone();
+                let user = UserAccount::from(&words[2], &words[3]);
+                return Ok(Request::UserReq(user, action));
+            } else {
+                malformed_req(&words[0], &words[0]);
+                return Err(());
             }
         }
         // Order
         "buy" | "sell" => {
-            match words.len() {
-                6 => {
-                    let order = Order::from( words[0].to_string(),
-                                             words[1].to_string().to_uppercase(),
-                                             words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
-                                             words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
-                                             &words[4].to_string()
-                                            );
-                    if order.quantity <= 0 || order.price <= 0.0 {
-                        eprintln!("Malformed \"{}\" request!", words[0]);
-                        eprintln!("Make sure the quantity and price are greater than 0!");
-                        return Err(());
-                    }
-                    return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
-                },
-                _ => {
-                    malformed_req(&words[0], "order");
+            if let 6 = words.len() {
+                let order = Order::from( words[0].to_string(),
+                                         words[1].to_string().to_uppercase(),
+                                         words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
+                                         words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
+                                         &words[4].to_string()
+                                        );
+                if order.quantity <= 0 || order.price <= 0.0 {
+                    eprintln!("Malformed \"{}\" request!", words[0]);
+                    eprintln!("Make sure the quantity and price are greater than 0!");
                     return Err(());
                 }
+                return Ok(Request::OrderReq(order, words[4].to_string(), words[5].to_string()));
+            } else {
+                malformed_req(&words[0], "order");
+                return Err(());
             }
         },
         "cancel" => {
-            match words.len() {
-                5 => {
-                    let req = CancelOrder {
-                        symbol: words[1].to_string().to_uppercase(),
-                        order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we don't need to panic here.
-                        username: words[3].to_string()
-                    };
+            if let 5 = words.len() {
+                let req = CancelOrder {
+                    symbol: words[1].to_string().to_uppercase(),
+                    order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we don't need to panic here.
+                    username: words[3].to_string()
+                };
 
-                    return Ok(Request::CancelReq(req, words[4].to_string()));
-                },
-                _ => {
-                    malformed_req(&words[0], &words[0]);
-                    return Err(());
-                }
+                return Ok(Request::CancelReq(req, words[4].to_string()));
+            } else {
+                malformed_req(&words[0], &words[0]);
+                return Err(());
             }
         }
         // request price info, current market info, or past market info
         "price" | "show" | "history" =>  {
-            match words.len() {
-                2 => {
-                    let req: InfoRequest = InfoRequest::new(words[0].to_string(), words[1].to_string().to_uppercase());
-                    return Ok(Request::InfoReq(req));
-                },
-                _ =>  {
-                    malformed_req(&words[0], "info");
-                    return Err(());
-                }
+            if let 2 = words.len() {
+                let req: InfoRequest = InfoRequest::new(words[0].to_string(), words[1].to_string().to_uppercase());
+                return Ok(Request::InfoReq(req));
+            } else {
+                malformed_req(&words[0], "info");
+                return Err(());
             }
         },
         // Simulate a market for n time steps
         "simulate" => {
-            match words.len() {
-                4 => {
-                    let req: Simulation = Simulation::from( words[0].to_string(),
-                                                            words[1].to_string().trim()
-                                                                                .parse::<u32>()
-                                                                                .expect("Please enter an integer number of traders!"),
-                                                            words[2].to_string().trim()
-                                                                                .parse::<u32>()
-                                                                                .expect("Please enter an integer number of markets!"),
-                                                            words[3].to_string().trim()
-                                                                                .parse::<u32>()
-                                                                                .expect("Please enter an integer number of time steps!"));
-                    return Ok(Request::SimReq(req));
-                },
-                _ => {
-                    malformed_req(&words[0], "sim");
-                    return Err(());
-                }
+            if let 4 = words.len() {
+                let req: Simulation = Simulation::from( words[0].to_string(),
+                                                        words[1].to_string().trim().parse::<u32>().expect("Please enter an integer number of traders!"),
+                                                        words[2].to_string().trim().parse::<u32>().expect("Please enter an integer number of markets!"),
+                                                        words[3].to_string().trim().parse::<u32>().expect("Please enter an integer number of time steps!")
+                                                      );
+                return Ok(Request::SimReq(req));
+            } else {
+                malformed_req(&words[0], "sim");
+                return Err(());
             }
         },
         // request instructions
