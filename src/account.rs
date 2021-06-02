@@ -94,8 +94,33 @@ impl UserAccount {
 
 
 // Where we store all our users
+// ------------------------------------------------------------------------------------------------------
+// TODO:
+//      We have a bit of an issue.
+//
+//          When we make a new account, the user doesn't know their ID.
+//          The ID is generated for them later, and so in subsequent request,
+//          we the user will pass their Username/Password combo to do things on our exchange.
+//
+//          The issue is, ideally, we would store userID in orders/trades, as that requires less
+//          data to be stored in memory than a username (4 bytes vs. x bytes where x may be large).
+//
+//          The thing is, when we handle newly executed trades, the only information we have is
+//          the userIDs associated with the orders. As it stands, we have no way of obtaining
+//          account information from just a userID, since our user hashmap is stored as a
+//             {username: account}
+//          pair. Technically, we could create another hashmap of {userID: username} pairs, but this
+//          seems silly, and also I don't want to have to maintain an additional data structure.
+//
+//          Another alternative (if I had a database link) would be to just do
+//              SELECT * FROM PendingOrders WHERE user_id=$CURRENT_ID;
+//          to get all the pending orders that belong to the user with the ID,
+//          but we don't have that yet, and I think we would probably want some type of
+//          in-memory cache so we have to deal with the problem anyways.
+// ------------------------------------------------------------------------------------------------------
 pub struct Users {
     users: HashMap<String, UserAccount>,
+    id_map: HashMap<i32, String>,   // maps user_id to username
     total: i32
 }
 
@@ -103,8 +128,10 @@ impl Users {
 
     pub fn new() -> Self {
         let map: HashMap<String, UserAccount> = HashMap::new();
+        let id_map: HashMap<i32, String> = HashMap::new();
         Users {
             users: map,
+            id_map: id_map,
             total: 0
         }
     }
@@ -118,6 +145,7 @@ impl Users {
         } else {
             let mut account = account;
             self.total = account.set_id(&self);
+            self.id_map.insert(account.id.unwrap(), account.username.clone());
             self.users.insert(account.username.clone(), account);
             return Some(self.total);
         }
@@ -225,8 +253,10 @@ impl Users {
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
-        let account = self._get_mut(username).expect("update_single_user ERROR: couldn't find user!");
+    // fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
+    fn update_single_user(&mut self, id: i32, trades: &Vec<FilledOrder>, is_filler: bool) {
+        let username: String = self.id_map.get(&id).expect("update_single_user Error couldn't get username from userID").clone();
+        let account = self._get_mut(&username).expect("update_single_user ERROR: couldn't find user!");
         // Since we can't remove entries while iterating, store the key's here.
         // We know we won't need more than trade.len() entries.
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());
@@ -284,21 +314,23 @@ impl Users {
          **/
 
         // Map of {users: freshly executed trades}
-        let mut update_map: HashMap<String, Vec<FilledOrder>> = HashMap::new();
+        let mut update_map: HashMap<i32, Vec<FilledOrder>> = HashMap::new();
 
         // Fill update_map
         for trade in trades.iter() {
-            let entry = update_map.entry(trade.username.clone()).or_insert(Vec::with_capacity(trades.len()));
+            let entry = update_map.entry(trade.user_id.clone()).or_insert(Vec::with_capacity(trades.len()));
             entry.push(trade.clone());
         }
 
         // Case 1
         // TODO: This is a good candidate for multithreading.
-        for (user, new_trades) in update_map.iter() {
-            self.update_single_user(&user, new_trades, false);
+        for (user_id, new_trades) in update_map.iter() {
+            // self.update_single_user(&user, new_trades, false);
+            self.update_single_user(*user_id, new_trades, false);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(&trades[0].filler_name, &trades, true);
+        // self.update_single_user(&trades[0].filler_name, &trades, true);
+        self.update_single_user(trades[0].filler_id, &trades, true);
     }
 
     pub fn print_all(&self) {

@@ -93,7 +93,12 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                                          words[1].to_string().to_uppercase(),
                                          words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
                                          words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
-                                         &words[4].to_string()
+                                         None
+                                         // &words[4].to_string()
+                                         // TODO: problem, we don't necessarily want to
+                                         // authenticate while we tokenize the input, since that's
+                                         // should be handled later. How can we push the auth to
+                                         // later?
                                         );
                 if order.quantity <= 0 || order.price <= 0.0 {
                     eprintln!("Malformed \"{}\" request!", words[0]);
@@ -160,12 +165,14 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 /* Given a valid Request format, try to execute the Request. */
 pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
     match request {
-        Request::OrderReq(order, username, password) => {
+        Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
                 "buy" | "sell" => {
                     // Try to get the account
                     match users.authenticate(&username, &password) {
                         Ok(account) => {
+                            // Set the order's user id now that we have an account
+                            order.user_id = account.id;
                             if account.validate_order(&order) {
                                 &exchange.submit_order_to_market(users, order.clone(), &username, true);
                                 &exchange.show_market(&order.security);
