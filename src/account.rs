@@ -294,7 +294,9 @@ impl Users {
                 Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
                         entries_to_remove.push(order.order_id); // order completely filled
-                    } else {
+                    } else if !is_filler{
+                        // Don't update the filler's filled count,
+                        // new orders are added to accounts in submit_order_to_market.
                         order.filled += trade.exchanged; // order partially filled
                     }
                     account.executed_trades.push(update_trade);
@@ -325,7 +327,7 @@ impl Users {
 
         // Fill update_map
         for trade in trades.iter() {
-            let entry = update_map.entry(trade.user_id.clone()).or_insert(Vec::with_capacity(trades.len()));
+            let entry = update_map.entry(trade.user_id).or_insert(Vec::with_capacity(trades.len()));
             entry.push(trade.clone());
         }
 
