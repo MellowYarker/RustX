@@ -120,6 +120,7 @@ impl UserAccount {
 // ------------------------------------------------------------------------------------------------------
 pub struct Users {
     users: HashMap<String, UserAccount>,
+    // TODO: This should be an LRU cache eventually
     id_map: HashMap<i32, String>,   // maps user_id to username
     total: i32
 }
@@ -128,6 +129,7 @@ impl Users {
 
     pub fn new() -> Self {
         let map: HashMap<String, UserAccount> = HashMap::new();
+        // TODO: Eventually we want to do with capacity
         let id_map: HashMap<i32, String> = HashMap::new();
         Users {
             users: map,
@@ -253,8 +255,13 @@ impl Users {
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    // fn update_single_user(&mut self, username: &String, trades: &Vec<FilledOrder>, is_filler: bool) {
     fn update_single_user(&mut self, id: i32, trades: &Vec<FilledOrder>, is_filler: bool) {
+        // TODO:
+        //  At some point, we want to get the username by calling some helper access function.
+        //  This new function will
+        //      1. Check the id_map cache
+        //      2. If ID not found, check the database
+        //      3. Update the id_map cache (LRU)
         let username: String = self.id_map.get(&id).expect("update_single_user Error couldn't get username from userID").clone();
         let account = self._get_mut(&username).expect("update_single_user ERROR: couldn't find user!");
         // Since we can't remove entries while iterating, store the key's here.
@@ -325,11 +332,9 @@ impl Users {
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            // self.update_single_user(&user, new_trades, false);
             self.update_single_user(*user_id, new_trades, false);
         }
         // Case 2: update account who placed order that filled others.
-        // self.update_single_user(&trades[0].filler_name, &trades, true);
         self.update_single_user(trades[0].filler_id, &trades, true);
     }
 

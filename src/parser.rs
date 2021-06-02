@@ -89,16 +89,13 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Order
         "buy" | "sell" => {
             if let 6 = words.len() {
+                // Note that we do not provide an order ID (arg 4 is None).
+                // This value actually gets set later.
                 let order = Order::from( words[0].to_string(),
                                          words[1].to_string().to_uppercase(),
-                                         words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),
-                                         words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),
+                                         words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),// TODO we shouldn't panic here
+                                         words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),     // TODO we shouldn't panic here
                                          None
-                                         // &words[4].to_string()
-                                         // TODO: problem, we don't necessarily want to
-                                         // authenticate while we tokenize the input, since that's
-                                         // should be handled later. How can we push the auth to
-                                         // later?
                                         );
                 if order.quantity <= 0 || order.price <= 0.0 {
                     eprintln!("Malformed \"{}\" request!", words[0]);
@@ -115,7 +112,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
             if let 5 = words.len() {
                 let req = CancelOrder {
                     symbol: words[1].to_string().to_uppercase(),
-                    order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we don't need to panic here.
+                    order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we shouldn't panic here.
                     username: words[3].to_string()
                 };
 
@@ -138,6 +135,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Simulate a market for n time steps
         "simulate" => {
             if let 4 = words.len() {
+                // TODO: We shouldn't panic here, just write to stderr...
                 let req: Simulation = Simulation::from( words[0].to_string(),
                                                         words[1].to_string().trim().parse::<u32>().expect("Please enter an integer number of traders!"),
                                                         words[2].to_string().trim().parse::<u32>().expect("Please enter an integer number of markets!"),
