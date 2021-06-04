@@ -393,10 +393,9 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            // Create the order and send it to the market
-            let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, username);
-
             if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
+                // Create the order and send it to the market
+                let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, account.id);
                 if account.validate_order(&order) {
                     self.submit_order_to_market(users, order, username, true);
                 }
