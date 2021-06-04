@@ -2,7 +2,7 @@ CREATE TABLE Account (
     ID              int,
     username        varchar(15) NOT NULL,
     password        varchar(20) NOT NULL,
-    registerTime    date,
+    register_time   date,
     PRIMARY KEY(ID)
 );
 
@@ -26,6 +26,7 @@ CREATE TABLE Orders (
 
 CREATE TABLE PendingOrders (
     order_ID        int,
+    PRIMARY KEY(order_ID),
     /* CONSTRAINT fk_order */
         FOREIGN KEY(order_ID)
             REFERENCES Orders(order_ID)
@@ -41,6 +42,9 @@ CREATE TABLE ExecutedTrades (
     filler_UID      int,
     exchanged       int,
     execution_time  date,
+    -- Will never have 2+ trades with the same
+    -- (filled, filler) order id pair
+    PRIMARY KEY(filled_OID, filler_OID),
     /* CONSTRAINT fk_Order_filled */
         FOREIGN KEY(filled_OID)
             REFERENCES Orders(order_ID),
