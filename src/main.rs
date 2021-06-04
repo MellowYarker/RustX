@@ -11,7 +11,18 @@ use std::env;
 use std::process;
 use std::io::{self, prelude::*};
 
+use postgres::{Client, NoTls};
+
 fn main() {
+    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
+    println!("Successful connection!");
+    for row in client.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
+        let id: i32 = row.get(0);
+        let username: &str = row.get(1);
+        let password: &str = row.get(2);
+
+        println!("found account: {}, {}, {}", id, username, password);
+    }
 
     // Our central exchange, everything happens here.
     let mut exchange: Exchange = Exchange::new();
