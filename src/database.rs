@@ -71,19 +71,16 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
         let user_id: i32 = row.get(6);
         let status: &str = row.get(7);
 
-        println!("found pending order: {}, {}, {}, {}, {}, {}, {}, {}", order_id, symbol, action, quantity, filled, price, user_id, status);
         let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
         // Add the order we found to the market.
         // If a new market was created, update the exchange.
         if let Some(market) = insert_to_market(exchange.live_orders.get_mut(&order.security), &order) {
             exchange.live_orders.insert(order.security.clone(), market);
-            // // TODO: Unnecessary because we will just read the stats from the database.
-            // exchange.init_stats(&order);
         };
     }
 }
 
-// TODO
+// TODO: Company Name??
 /* Populate the statistics for each market
  *      - Future note: If we distribute markets across
  *        machines, it might be a good idea to provide
@@ -94,14 +91,14 @@ pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
         .expect("Something went wrong in the query.") {
 
         let symbol: &str = row.get(0);
+        let company_name: &str = row.get(1);
         let total_buys: i32 = row.get(2);
         let total_sells: i32 = row.get(3);
         let filled_buys: i32 = row.get(4);
         let filled_sells: i32 = row.get(5);
-        let latest_price: f64 = row.get(6);
+        let latest_price: Option<f64> = row.get(6); // Price might be NULL if no trades occured.
 
         let market_stats = SecStat::direct(symbol, total_buys, total_sells, filled_buys, filled_sells, latest_price);
-        println!("{:?}", market_stats);
         exchange.statistics.insert(symbol.to_string().clone(), market_stats);
     }
 }

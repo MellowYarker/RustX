@@ -38,9 +38,13 @@ impl SecStat {
         }
     }
 
-    pub fn direct(symbol: &str, total_buys: i32, total_sells: i32, filled_buys: i32, filled_sells: i32, last_price: f64) -> Self {
-        // Truncate price to 2 decimal places
-        let last_price = f64::trunc(last_price  * 100.0) / 100.0;
+    pub fn direct(symbol: &str, total_buys: i32, total_sells: i32, filled_buys: i32, filled_sells: i32, last_price: Option<f64>) -> Self {
+
+        let mut last_price = last_price;
+
+        if let Some(price) = last_price {
+            last_price = Some(f64::trunc(price * 100.0) / 100.0);
+        };
 
         SecStat {
             symbol: symbol.to_string().clone(),
@@ -48,7 +52,7 @@ impl SecStat {
             total_sells,
             filled_buys,
             filled_sells,
-            last_price: Some(last_price)
+            last_price
         }
     }
 
