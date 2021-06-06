@@ -38,6 +38,20 @@ impl SecStat {
         }
     }
 
+    pub fn direct(symbol: &str, total_buys: i32, total_sells: i32, filled_buys: i32, filled_sells: i32, last_price: f64) -> Self {
+        // Truncate price to 2 decimal places
+        let last_price = f64::trunc(last_price  * 100.0) / 100.0;
+
+        SecStat {
+            symbol: symbol.to_string().clone(),
+            total_buys,
+            total_sells,
+            filled_buys,
+            filled_sells,
+            last_price: Some(last_price)
+        }
+    }
+
     // Updates the price, returns the difference.
     pub fn update_price(&mut self, new_price: f64) -> f64 {
         match self.last_price {

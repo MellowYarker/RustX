@@ -69,3 +69,10 @@ CREATE TABLE Markets (
     latest_price    float8,
     PRIMARY KEY(symbol)
 );
+
+-- We have to store the count in a table because postgresql
+-- doesn't store row count as metadata, getting row count
+-- with SELECT count(*) from Orders; would be prohibitively expensive
+CREATE TABLE Exchange_Stats (
+    total_orders    int
+);

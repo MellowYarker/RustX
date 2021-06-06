@@ -2,7 +2,7 @@ use postgres::{Client, NoTls};
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 
-use crate::exchange::{Exchange, Market, Order};
+use crate::exchange::{Exchange, Market, Order, SecStat};
 
 // Directly inserts this order to the market
 // If the market didn't exist, we will return it as Some(Market)
@@ -77,8 +77,8 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
         // If a new market was created, update the exchange.
         if let Some(market) = insert_to_market(exchange.live_orders.get_mut(&order.security), &order) {
             exchange.live_orders.insert(order.security.clone(), market);
-            // TODO: Unnecessary because we will just read the stats from the database.
-            exchange.init_stats(&order);
+            // // TODO: Unnecessary because we will just read the stats from the database.
+            // exchange.init_stats(&order);
         };
     }
 }
@@ -90,6 +90,20 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
  *        a list of markets to read from.
  **/
 pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
+    for row in conn.query("SELECT * FROM Markets", &[])
+        .expect("Something went wrong in the query.") {
+
+        let symbol: &str = row.get(0);
+        let total_buys: i32 = row.get(2);
+        let total_sells: i32 = row.get(3);
+        let filled_buys: i32 = row.get(4);
+        let filled_sells: i32 = row.get(5);
+        let latest_price: f64 = row.get(6);
+
+        let market_stats = SecStat::direct(symbol, total_buys, total_sells, filled_buys, filled_sells, latest_price);
+        println!("{:?}", market_stats);
+        exchange.statistics.insert(symbol.to_string().clone(), market_stats);
+    }
 }
 
 // TODO
@@ -99,4 +113,10 @@ pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
  *        a list of markets to read from.
  **/
 pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) {
+    for row in conn.query("SELECT total_orders FROM Exchange_Stats", &[])
+        .expect("Something went wrong in the query.") {
+
+        let total_orders: i32 = row.get(0);
+        exchange.total_orders = total_orders;
+    }
 }
