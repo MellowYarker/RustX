@@ -3,6 +3,7 @@
 pub mod exchange;
 pub mod parser;
 pub mod account;
+pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
@@ -14,6 +15,17 @@ use std::io::{self, prelude::*};
 use postgres::{Client, NoTls};
 
 fn main() {
+    // Our central exchange, everything happens here.
+    let mut exchange: Exchange = Exchange::new();
+    // All our users are stored here.
+    let mut users: Users = Users::new();
+
+    // Read in the users from the database.
+    // TODO: Which users should be read in?
+    //       We probably don't want to have *every* user,
+    //       only the one's who are likely to be placing orders.
+    //
+    //       That, or we can read and maintain users as they request info.
     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
     println!("Successful connection!");
     for row in client.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
@@ -22,12 +34,22 @@ fn main() {
         let password: &str = row.get(2);
 
         println!("found account: {}, {}, {}", id, username, password);
+
+        // TODO: Insert the users we found into the Users hashmap.
     }
 
-    // Our central exchange, everything happens here.
-    let mut exchange: Exchange = Exchange::new();
-    // All our users are stored here.
-    let mut users: Users = Users::new();
+    /* TODO
+     *  We need to populate our exchange with the relevant data from the database.
+     *  Data we care about includes:
+     *      - Top N buys and sells in each market
+     *      - Current statistics for every market
+     * */
+    // Fill the pending orders of the markets
+    database::populate_exchange_markets(&mut exchange, &mut client);
+    // Fill the statistics for each market
+    database::populate_market_statistics(&mut exchange, &mut client);
+    // Fill the statistics for the exchange
+    database::populate_exchange_statistics(&mut exchange, &mut client);
 
     let argument = match parser::command_args(env::args()) {
         Ok(arg) => arg,

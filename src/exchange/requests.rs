@@ -13,6 +13,7 @@ pub struct Order {
 }
 
 impl Order {
+    // Used when reading a user from the frontend
     pub fn from(action: String, security: String, quantity: i32, price: f64, user_id: Option<i32>) -> Order {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
@@ -25,6 +26,23 @@ impl Order {
             price,
             order_id: 0, // Updated later.
             user_id
+        }
+    }
+
+    // Used when reading an existing user from the database
+    pub fn direct(action: &str, security: &str, quantity: i32, filled: i32, price: f64, order_id: i32, user_id: i32) -> Order {
+        // Truncate price to 2 decimal places
+        let price = f64::trunc(price  * 100.0) / 100.0;
+
+        // TODO: Need to include order status and time placed/updated.
+        Order {
+            action: action.to_string().clone(),
+            security: security.to_string().clone(),
+            quantity,
+            filled,
+            price,
+            order_id,
+            user_id: Some(user_id)
         }
     }
 }
