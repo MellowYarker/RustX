@@ -332,6 +332,9 @@ impl Exchange {
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
     pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users) {
+        eprintln!("SIMULATION UNDER CONSTRUCTION DURING DATABASE MIGRATION");
+    }
+    /*
 
         let buy = String::from("buy");
         let sell = String::from("sell");
@@ -405,4 +408,5 @@ impl Exchange {
         // If you want prints of each users account, uncomment this.
         // users.print_all();
     }
+*/
 }
