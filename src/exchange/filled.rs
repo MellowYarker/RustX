@@ -35,6 +35,20 @@ impl FilledOrder {
     pub fn order_to_filled_order(pending: &Order, filler: &Order, exchanged: i32) -> Self {
         FilledOrder::from(&pending.action, &pending.security, pending.price, pending.order_id, pending.user_id.unwrap(), filler.order_id, filler.user_id.unwrap(), exchanged)
     }
+
+    /* Used when reading data directly from the database. */
+    pub fn direct(symbol: &str, action: &str, price: f64, filled_OID: i32, filled_UID: i32, filler_OID: i32, filler_UID: i32, exchanged: i32) -> Self {
+        FilledOrder {
+            security: symbol.to_string().clone(),
+            action: action.to_string().clone(),
+            price,
+            id: filled_OID,
+            user_id: filled_UID,
+            filled_by: filler_OID,
+            filler_id: filler_UID,
+            exchanged
+        }
+    }
 }
 
 impl Clone for FilledOrder {
