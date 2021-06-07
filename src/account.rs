@@ -1,6 +1,9 @@
 use crate::exchange::requests::Order;
 use crate::exchange::filled::FilledOrder;
+
 use std::collections::HashMap;
+
+use postgres::{Client, NoTls};
 
 // Error types for authentication
 pub enum AuthError<'a> {
@@ -27,13 +30,27 @@ pub struct UserAccount {
 }
 
 impl UserAccount {
-    pub fn from(name: &String, password: &String) -> Self {
+    pub fn from(username: &String, password: &String) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
         let trades: Vec<FilledOrder> = Vec::new();
         UserAccount {
-            username: name.to_string().clone(),
-            password: password.to_string().clone(),
+            username: username.clone(),
+            password: password.clone(),
             id: None, // We set this later
+            pending_orders: placed,
+            executed_trades: trades,
+        }
+    }
+
+    /* Used when reading values from database.
+     * */
+    pub fn direct(id: i32, username: &str, password: &str) -> Self {
+        let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
+        let trades: Vec<FilledOrder> = Vec::new();
+        UserAccount {
+            username: username.to_string().clone(),
+            password: password.to_string().clone(),
+            id: Some(id),
             pending_orders: placed,
             executed_trades: trades,
         }
@@ -45,7 +62,78 @@ impl UserAccount {
         return self.id.unwrap();
     }
 
-    /* Consider the following scenario:
+    /* TODO: Order inserts by time executed!
+     * Get this accounts pending orders from the database.
+     **/
+    fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
+        let query_string = "SELECT o.* from Orders o, PendingOrders P WHERE o.order_ID = p.order_ID AND o.user_ID = (SELECT ID FROM Account where Account.username = $1);";
+        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch pending orders failed!") {
+            let order_id:       i32  = row.get(0);
+            let symbol:         &str = row.get(1);
+            let action:         &str = row.get(2);
+            let quantity:       i32  = row.get(3);
+            let filled:         i32  = row.get(4);
+            let price:          f64  = row.get(5);
+            let user_id:        i32  = row.get(6);
+            // let status:         i32  = row.get(7); // <---- TODO
+            // let time_placed:    i32  = row.get(7); // <---- TODO
+            // let time_updated:   i32  = row.get(7); // <---- TODO
+
+            // We will just re-insert everything.
+            let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
+            let market = self.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+            market.insert(order.order_id, order);
+        }
+    }
+
+    /* TODO: Order inserts by time executed!
+     * Get this accounts executed trades from the database.
+     **/
+    fn fetch_account_executed_trades(&mut self, conn: &mut Client) {
+        self.executed_trades.clear();
+        // First, lets get trades where we had our order filled.
+        let query_string = "SELECT * from ExecutedTrades e WHERE e.filled_UID = (SELECT ID from Account where Account.username = $1);";
+        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
+            let symbol:     &str = row.get(0);
+            let action:     &str = row.get(1);
+            let price:      f64  = row.get(2);
+            let filled_OID: i32  = row.get(3);
+            let filled_UID: i32  = row.get(4);
+            let filler_OID: i32  = row.get(5);
+            let filler_UID: i32  = row.get(6);
+            let exchanged:  i32  = row.get(7);
+            // let exec_time:  date  = row.get(8); // <--- TODO
+            let trade = FilledOrder::direct(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged);
+            self.executed_trades.push(trade);
+        }
+
+        // Next, lets get trades where we were the filler.
+        let query_string = "SELECT * from ExecutedTrades e WHERE e.filler_UID = (SELECT ID from Account where Account.username = $1);";
+        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
+            let symbol:     &str = row.get(0);
+            let mut action: &str = row.get(1);
+            let price:      f64  = row.get(2);
+            let filled_OID: i32  = row.get(3);
+            let filled_UID: i32  = row.get(4);
+            let filler_OID: i32  = row.get(5);
+            let filler_UID: i32  = row.get(6);
+            let exchanged:  i32  = row.get(7);
+            // let exec_time:  date  = row.get(8); // <--- TODO
+
+            // Switch the action because we were the filler.
+            match action.to_string().to_lowercase().as_str() {
+                "buy" => action = "sell",
+                "sell" => action = "buy",
+                _ => ()
+            }
+
+            let trade = FilledOrder::direct(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged);
+            self.executed_trades.push(trade);
+        }
+    }
+
+    /*
+     * Consider the following scenario:
      *  -   user places buy order for 10 shares of X at $10/share.
      *          - the order remains on the market and is not filled.
      *  -   later, the same user places a sell order for 3 shares of X at n <= $10/share.
@@ -138,18 +226,62 @@ impl Users {
         }
     }
 
+    /* TODO: Find a better way to do this.
+     * Insert a user to program cache from database
+     */
+    pub fn populate_from_db(&mut self, id: i32, username: &str, password: &str) {
+        let acc = UserAccount::direct(id, username, password);
+        self.id_map.insert(id, username.to_string().clone());
+        self.users.insert(username.to_string().clone(), acc);
+    }
+
+    /* TODO: This is horrible. We need to move populate_from_db and this function
+     * into the database.rs file, and group them into 1 function.
+     * */
+    pub fn direct_update_total(&mut self, count: i32) {
+        self.total = count;
+    }
+
     /* If an account with this username exists, do nothing, otherwise
      * add the account and return it's ID.
      */
-    pub fn new_account(&mut self, account: UserAccount) -> Option<i32> {
+    pub fn new_account(&mut self, account: UserAccount, conn: &mut Client) -> Option<i32> {
+        // User is cached already
         if self.users.contains_key(&account.username) {
             return None;
         } else {
+            // TODO: Check database, and insert on success.
+            println!("Checking database!");
+            let query_string = "SELECT ID FROM Account WHERE Account.username=$1";
+            for row in conn.query(query_string, &[&account.username]) {
+                // If a user exists, return None
+                if let Some(data) = row.get(0) {
+                    return None;
+                }
+            }
+            println!("User doesn't exist so we're going to add now.");
+            // User doesn't exist, so create a new one.
             let mut account = account;
             self.total = account.set_id(&self);
-            self.id_map.insert(account.id.unwrap(), account.username.clone());
-            self.users.insert(account.username.clone(), account);
-            return Some(self.total);
+
+            // Insert to db
+            // TODO: Insert regsiter_time.
+            let query_string = "INSERT INTO Account (ID, username, password) VALUES ($1, $2, $3);";
+            match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
+                Ok(msg) => {
+                    // Cache in program
+                    self.id_map.insert(account.id.unwrap(), account.username.clone());
+                    self.users.insert(account.username.clone(), account);
+                    return Some(self.total);
+                },
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    eprintln!("Something went wrong with the insert!");
+                }
+            }
+            // TODO:
+            //  This should actually return an Error because we failed to insert to the database!
+            return None;
         }
     }
 
@@ -163,6 +295,50 @@ impl Users {
             }
         }
     }
+
+    /* Stores a user in the programs cache. */
+    fn cache_user(&mut self, account: UserAccount) {
+        self.id_map.insert(account.id.unwrap(), account.username.clone());
+        self.users.insert(account.username.clone(), account);
+    }
+
+    /* Checks the user cache*/
+    fn auth_check_cache<'a>(&self, username: &'a String, password: & String) -> Result<(), AuthError<'a>> {
+        if let Some(account) = self.users.get(username) {
+            // Found user in cache
+            if *password == account.password {
+                return Ok(());
+            }
+            return Err(AuthError::BadPassword(None));
+        }
+        return Err(AuthError::NoUser(username));
+    }
+
+    /* Checks the database for this user.*/
+    fn auth_check_db<'a>(&self, username: &'a String, password: & String, conn: &mut Client) -> Result<UserAccount, AuthError<'a>> {
+        let query_string = "SELECT ID, username, password FROM Account WHERE Account.username = $1";
+        let result = conn.query(query_string, &[&username]).expect("Something went wrong with the authenticate query.");
+
+        // Did not find the user
+        if result.len() == 0 {
+            return Err(AuthError::NoUser(username));
+        }
+
+        // Found a user, usernames are unique so we get 1 row.
+        let row = &result[0];
+        let recv_id: i32 = row.get(0);
+        let recv_username: &str = row.get(1);
+        let recv_password: &str = row.get(2);
+
+        // User authenticated.
+        if *password == recv_password {
+            return Ok(UserAccount::direct(recv_id, recv_username, recv_password));
+        }
+
+        // Password was incorrect.
+        return Err(AuthError::BadPassword(None));
+    }
+
     /* If the username exists and the password is correct,
      * we return the user account.
      *
@@ -171,30 +347,68 @@ impl Users {
      *
      * TODO: Maybe we can return some type of session token
      *       for the frontend to hold on to?
+     *
      */
-    pub fn authenticate<'a>(&self, username: &'a String, password: & String) -> Result<&UserAccount, AuthError<'a>> {
-        match self.users.get(username) {
-            Some(account) => {
-                if *password == account.password {
-                    return Ok(account);
-                }
-                return Err(AuthError::BadPassword(None))
-            },
-            None => ()
+    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
+        // First, we check our in-memory cache
+        let mut cache_miss = true;
+        match self.auth_check_cache(username, password) {
+            Ok(()) => cache_miss = false,
+            Err(e) => {
+                if let AuthError::BadPassword(_) = e {
+                    return Err(e);
+                };
+            }
         }
-        return Err(AuthError::NoUser(username));
+
+        // On cache miss, check the database.
+        if cache_miss {
+            match self.auth_check_db(username, password, conn) {
+                // We got an account, move it into the cache.
+                Ok(mut account) => {
+                    // Since our user will be cached, and we are likely to do things with the user.
+                    // We should probably make sure the in-mem pending orders are consistent w/ the database!
+                    account.fetch_account_pending_orders(conn);
+                    self.cache_user(account);
+                    // self.id_map.insert(account.id.unwrap(), account.username.clone());
+                    // self.users.insert(account.username.clone(), account);
+                },
+                Err(e) => return Err(e)
+            }
+        }
+
+        // TODO: we call get twice if it was a cache hit.
+        //       This is clearly stupid, but Rust's borrow checker is mad at me again,
+        //       so I will figure this out later.
+        return Ok(self.users.get(username).unwrap());
     }
 
-    /* Returns a reference to a user account if:
-     *  - the account exists and
-     *  - the password is correct for this user
+    /* Returns a reference to a user account if
+     * user has been authenticated.
      */
-    pub fn get<'a>(&self, username: &'a String, authenticated: bool) -> Result<&UserAccount, AuthError<'a>> {
+    pub fn get<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get(username) {
-                Some(account) => return Ok(account),
-                None => return Err(AuthError::NoUser(username)) // impossible?
+                // Cached
+                Some(account) => (),//return Ok(account),
+                // In database
+                None => {
+                    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
+                    let result = client.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("Failed to get user from database.");
+
+                    let row = &result[0];
+                    let recv_id: i32 = row.get(0);
+                    let recv_username: &str = row.get(1);
+                    let recv_password: &str = row.get(2);
+                    // TODO: Do we want to cache the user?
+                    let account = UserAccount::direct(recv_id, recv_username, recv_password);
+                    self.cache_user(account);
+                }
             }
+            // TODO: we call get twice if it was a cache hit.
+            //       This is clearly stupid, but Rust's borrow checker is mad at me again,
+            //       so I will figure this out later.
+            return Ok(self.users.get(username).unwrap());
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
         return Err(AuthError::BadPassword(Some(err_msg)));
@@ -209,9 +423,26 @@ impl Users {
     pub fn get_mut<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&mut UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get_mut(username) {
-                Some(account) => return Ok(account),
-                None => return Err(AuthError::NoUser(username))
+                // Cached
+                Some(account) => (),//return Ok(account),
+                // In database
+                None => {
+                    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
+                    let result = client.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("Failed to get user from database.");
+
+                    let row = &result[0];
+                    let recv_id: i32 = row.get(0);
+                    let recv_username: &str = row.get(1);
+                    let recv_password: &str = row.get(2);
+                    // TODO: Do we want to cache the user?
+                    let account = UserAccount::direct(recv_id, recv_username, recv_password);
+                    self.cache_user(account);
+                }
             }
+            // TODO: we call get twice if it was a cache hit.
+            //       This is clearly stupid, but Rust's borrow checker is mad at me again,
+            //       so I will figure this out later.
+            return Ok(self.users.get_mut(username).unwrap());
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
         return Err(AuthError::BadPassword(Some(err_msg)));
@@ -232,10 +463,17 @@ impl Users {
      *  - the account exists and
      *  - the password is correct for this user
      */
-    pub fn print_user(&self, username: &String, authenticated: bool) {
-        match self.get(username, authenticated) {
+    pub fn print_user(&mut self, username: &String, authenticated: bool) {
+        match self.get_mut(username, authenticated) {
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
+
+                let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+                    .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+                account.fetch_account_pending_orders(&mut client);
+                account.fetch_account_executed_trades(&mut client);
+
                 println!("\n\tOrders Awaiting Execution");
                 for (_, market) in account.pending_orders.iter() {
                     for (_, order) in market.iter() {
@@ -341,11 +579,14 @@ impl Users {
     }
 
     pub fn print_all(&self) {
+        println!("PRINT_ALL UNDER CONSUTRUCTION DURING DB MIGRATION");
+        /*
         for (k, v) in self.users.iter() {
             match self.authenticate(&k, &v.password) {
                 Ok(_) => self.print_user(&k, true),
                 Err(_) => ()
             }
         }
+        */
     }
 }

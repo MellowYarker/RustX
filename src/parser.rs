@@ -1,5 +1,6 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
 pub use crate::print_instructions;
+use postgres::{Client, NoTls};
 
 use crate::account::{UserAccount, Users};
 
@@ -161,13 +162,13 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, conn: &mut Client) {
     match request {
         Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
                 "buy" | "sell" => {
                     // Try to get the account
-                    match users.authenticate(&username, &password) {
+                    match users.authenticate(&username, &password, conn) {
                         Ok(account) => {
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
@@ -186,7 +187,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             }
         },
         Request::CancelReq(order_to_cancel, password) => {
-            match users.authenticate(&(order_to_cancel.username), &password) {
+            match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
                     match exchange.cancel_order(&order_to_cancel, users) {
                         Ok(_) => println!("Order successfully cancelled."),
@@ -251,13 +252,14 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::UserReq(account, action) => {
             match &action[..] {
                 "create" => {
-                   match users.new_account(account) {
+                   // match users.new_account(account) {
+                   match users.new_account(account, conn) {
                        Some(id) => println!("Successfully created new account with id {}.", id),
                        None => println!("Sorry, that username is already taken!")
                    }
                 },
                 "show" => {
-                    match users.authenticate(&account.username, &account.password) {
+                    match users.authenticate(&account.username, &account.password, conn) {
                         Ok(_) => {
                             users.print_user(&account.username, true);
                         },
