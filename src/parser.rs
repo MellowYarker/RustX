@@ -227,10 +227,15 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 },
                 // Show the past orders of this market.
                 "history" => {
-                    if exchange.trades.contains_key(&req.symbol) {
-                        exchange.show_market_history(&req.symbol);
-                    } else {
-                        println!("The symbol that was requested either doesn't exist or has no past trades.");
+                    match exchange.has_trades.get(&req.symbol) {
+                        Some(has_trades) => {
+                            if *has_trades {
+                                exchange.show_market_history(&req.symbol, conn);
+                            } else {
+                                println!("The market that was requested has no past trades!");
+                            }
+                        },
+                        None => println!("The symbol that was requested does not exist.")
                     }
                 },
                 _ => {

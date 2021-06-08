@@ -48,6 +48,8 @@ fn main() {
     database::populate_market_statistics(&mut exchange, &mut client);
     // Fill the statistics for the exchange
     database::populate_exchange_statistics(&mut exchange, &mut client);
+    // Fill the has_trades map for the exchange
+    database::populate_has_trades(&mut exchange, &mut client);
 
     println!("Populated users, markets, and statistics.");
 

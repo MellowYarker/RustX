@@ -29,22 +29,22 @@ pub enum PriceError {
 // Represents our exchange's state.
 #[derive(Debug)]
 pub struct Exchange {
-    pub live_orders: HashMap<String, Market>,       // Orders on the market
-    pub trades: HashMap<String, Vec<Trade>>, // Orders that have been filled
-    pub statistics: HashMap<String, SecStat>,       // The general statistics of each symbol
+    pub live_orders: HashMap<String, Market>,    // Orders on the market
+    pub has_trades: HashMap<String, bool>,
+    pub statistics: HashMap<String, SecStat>,    // The general statistics of each symbol
     pub total_orders: i32
 }
 
 impl Exchange {
     // Create a new exchange on startup
     pub fn new() -> Self {
-        let live: HashMap<String, Market> = HashMap::new();
-        let filled: HashMap<String, Vec<Trade>> = HashMap::new();
-        let stats: HashMap<String, SecStat> = HashMap::new();
+        let live_orders: HashMap<String, Market> = HashMap::new();
+        let has_trades: HashMap<String, bool> = HashMap::new();
+        let statistics: HashMap<String, SecStat> = HashMap::new();
         Exchange {
-            live_orders: live,
-            trades: filled,
-            statistics: stats,
+            live_orders,
+            has_trades,
+            statistics,
             total_orders: 0
         }
     }
@@ -106,7 +106,7 @@ impl Exchange {
              */
             // Updates database too.
             users.update_account_orders(&trades);
-            self.extend_past_orders(&mut trades);
+            self.has_trades.insert(order.symbol.clone(), true);
         };
 
         self.total_orders += 1;
@@ -134,15 +134,6 @@ impl Exchange {
                 Err(PriceError::NoTrades)
             }
         }
-    }
-
-    // Extends the past orders vector
-    fn extend_past_orders(&mut self, new_orders: &mut Vec<Trade>) {
-
-        // Default initialize the past orders market if it doesn't already exist
-        let default_type: Vec<Trade> = Vec::new();
-        let market = self.trades.entry(new_orders[0].symbol.clone()).or_insert(default_type);
-        market.append(new_orders);
     }
 
     // Print a market
@@ -187,17 +178,20 @@ impl Exchange {
 
     }
 
+    // TODO: Read past trades from database
     // Shows the history of orders in this market.
-    pub fn show_market_history(&self, symbol: &String) {
-        let market = self.trades.get(symbol).expect("The symbol that was requested either doesn't exist or has no past trades.");
-
-        println!("\nMarket History: ${}", symbol);
-        println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
-        println!("\t\t------------------------------------------------------");
-        for past_order in market {
-            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filler_oid, past_order.filled_oid, past_order.exchanged, past_order.price);
+    pub fn show_market_history(&self, symbol: &String, conn: &mut Client) {
+        if let Some(trades) = database::read_trades(symbol, conn) {
+            println!("\nMarket History: ${}", symbol);
+            println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
+            println!("\t\t------------------------------------------------------");
+            for past_order in trades {
+                println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filler_oid, past_order.filled_oid, past_order.exchanged, past_order.price);
+            }
+            println!("\t\t------------------------------------------------------\n");
+        } else {
+            eprintln!("The security that was requested either doesn't exist or has no past trades.");
         }
-        println!("\t\t------------------------------------------------------\n");
     }
 
     /* Add an order to the security's order list.
