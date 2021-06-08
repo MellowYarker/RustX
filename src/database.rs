@@ -1,4 +1,4 @@
-use postgres::{Client, NoTls};
+use postgres::Client;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 
@@ -69,7 +69,7 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
         let filled: i32 = row.get(4);
         let price: f64 = row.get(5);
         let user_id: i32 = row.get(6);
-        let status: &str = row.get(7);
+        // let status: &str = row.get(7);
 
         let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
         // Add the order we found to the market.
@@ -91,7 +91,7 @@ pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
         .expect("Something went wrong in the query.") {
 
         let symbol: &str = row.get(0);
-        let company_name: &str = row.get(1);
+        // let company_name: &str = row.get(1);
         let total_buys: i32 = row.get(2);
         let total_sells: i32 = row.get(3);
         let filled_buys: i32 = row.get(4);

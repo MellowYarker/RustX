@@ -1,6 +1,6 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
 pub use crate::print_instructions;
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 use crate::account::{UserAccount, Users};
 

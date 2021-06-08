@@ -92,31 +92,31 @@ impl UserAccount {
     fn fetch_account_executed_trades(&mut self, conn: &mut Client) {
         self.executed_trades.clear();
         // First, lets get trades where we had our order filled.
-        let query_string = "SELECT * from ExecutedTrades e WHERE e.filled_UID = (SELECT ID from Account where Account.username = $1);";
+        let query_string = "SELECT * from ExecutedTrades e WHERE e.filled_UID = (SELECT ID from Account where Account.username = $1) ORDER BY e.filled_OID;";
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
             let symbol:     &str = row.get(0);
             let action:     &str = row.get(1);
             let price:      f64  = row.get(2);
-            let filled_OID: i32  = row.get(3);
-            let filled_UID: i32  = row.get(4);
-            let filler_OID: i32  = row.get(5);
-            let filler_UID: i32  = row.get(6);
+            let filled_oid: i32  = row.get(3);
+            let filled_uid: i32  = row.get(4);
+            let filler_oid: i32  = row.get(5);
+            let filler_uid: i32  = row.get(6);
             let exchanged:  i32  = row.get(7);
             // let exec_time:  date  = row.get(8); // <--- TODO
-            let trade = FilledOrder::direct(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged);
+            let trade = FilledOrder::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
             self.executed_trades.push(trade);
         }
 
         // Next, lets get trades where we were the filler.
-        let query_string = "SELECT * from ExecutedTrades e WHERE e.filler_UID = (SELECT ID from Account where Account.username = $1);";
+        let query_string = "SELECT * from ExecutedTrades e WHERE e.filler_UID = (SELECT ID from Account where Account.username = $1) ORDER BY e.filled_OID;";
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
             let symbol:     &str = row.get(0);
             let mut action: &str = row.get(1);
             let price:      f64  = row.get(2);
-            let filled_OID: i32  = row.get(3);
-            let filled_UID: i32  = row.get(4);
-            let filler_OID: i32  = row.get(5);
-            let filler_UID: i32  = row.get(6);
+            let filled_oid: i32  = row.get(3);
+            let filled_uid: i32  = row.get(4);
+            let filler_oid: i32  = row.get(5);
+            let filler_uid: i32  = row.get(6);
             let exchanged:  i32  = row.get(7);
             // let exec_time:  date  = row.get(8); // <--- TODO
 
@@ -127,7 +127,7 @@ impl UserAccount {
                 _ => ()
             }
 
-            let trade = FilledOrder::direct(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged);
+            let trade = FilledOrder::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
             self.executed_trades.push(trade);
         }
     }
@@ -255,7 +255,7 @@ impl Users {
             let query_string = "SELECT ID FROM Account WHERE Account.username=$1";
             for row in conn.query(query_string, &[&account.username]) {
                 // If a user exists, return None
-                if let Some(data) = row.get(0) {
+                if let Some(_) = row.get(0) {
                     return None;
                 }
             }
@@ -268,7 +268,7 @@ impl Users {
             // TODO: Insert regsiter_time.
             let query_string = "INSERT INTO Account (ID, username, password) VALUES ($1, $2, $3);";
             match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
-                Ok(msg) => {
+                Ok(_) => {
                     // Cache in program
                     self.id_map.insert(account.id.unwrap(), account.username.clone());
                     self.users.insert(account.username.clone(), account);
@@ -390,7 +390,7 @@ impl Users {
         if authenticated {
             match self.users.get(username) {
                 // Cached
-                Some(account) => (),//return Ok(account),
+                Some(_) => (),//return Ok(account),
                 // In database
                 None => {
                     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
@@ -424,7 +424,7 @@ impl Users {
         if authenticated {
             match self.users.get_mut(username) {
                 // Cached
-                Some(account) => (),//return Ok(account),
+                Some(_) => (),//return Ok(account),
                 // In database
                 None => {
                     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
@@ -513,13 +513,13 @@ impl Users {
         let market = account.pending_orders.entry(trades[0].security.clone()).or_insert(HashMap::new());
 
         for trade in trades.iter() {
-            let mut id = trade.id;
+            let mut id = trade.filled_oid;
             let mut update_trade = trade.clone();
 
             // If this user submitted the order that was the filler,
             // we need to access the filled_by id and switch order type.
             if is_filler {
-                id = trade.filled_by;
+                id = trade.filler_oid;
                 if trade.action.as_str() == "buy" {
                     update_trade.action = SELL.to_string();
                 } else {
@@ -565,7 +565,7 @@ impl Users {
 
         // Fill update_map
         for trade in trades.iter() {
-            let entry = update_map.entry(trade.user_id).or_insert(Vec::with_capacity(trades.len()));
+            let entry = update_map.entry(trade.filled_uid).or_insert(Vec::with_capacity(trades.len()));
             entry.push(trade.clone());
         }
 
@@ -575,7 +575,7 @@ impl Users {
             self.update_single_user(*user_id, new_trades, false);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(trades[0].filler_id, &trades, true);
+        self.update_single_user(trades[0].filler_uid, &trades, true);
     }
 
     pub fn print_all(&self) {

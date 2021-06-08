@@ -178,7 +178,7 @@ impl Exchange {
         println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
         println!("\t\t------------------------------------------------------");
         for past_order in market {
-            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filled_by, past_order.id, past_order.exchanged, past_order.price);
+            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filler_oid, past_order.filled_oid, past_order.exchanged, past_order.price);
         }
         println!("\t\t------------------------------------------------------\n");
     }
