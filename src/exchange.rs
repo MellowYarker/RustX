@@ -15,6 +15,11 @@ pub use crate::exchange::market::Market;
 
 pub use crate::account::{UserAccount, Users};
 
+// pub mod database;
+pub use crate::database;
+
+use postgres::{Client, NoTls};
+
 // Error types for price information.
 pub enum PriceError {
     NoMarket,
@@ -58,13 +63,23 @@ impl Exchange {
      */
     fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>) -> Option<f64> {
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
+        // TODO:
+        //  1. Add the new order to the Orders table
+        //  2. Add it to pendingOrders if it's not COMPLETE
+        //  3. If trades occured, update market price in DB
+        //  4. Update the orders that were filled + insert Trades to ExecutedTrades
+
+        let mut conn = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+            .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+        database::write_insert_order(order, &mut conn);
 
         // Update the counters and the price
         match &order.action[..] {
-            "buy" => {
+            "BUY" => {
                 stats.total_buys += 1;
             },
-            "sell" => {
+            "SELL" => {
                 stats.total_sells += 1;
             },
             _ => ()
@@ -76,8 +91,11 @@ impl Exchange {
         if let Some(mut trades) = executed_trades {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
-            stats.update_price(price);
-            stats.update_trades(&trades);
+            // Updates in-mem data
+            stats.update_market_stats(price, &trades);
+            // Updates database
+            database::write_update_market_stats(stats, &mut conn);
+
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
              *
@@ -215,10 +233,10 @@ impl Exchange {
                 // as well as the users account.
                 if order.quantity != order.filled {
                     match &order.action[..] {
-                        "buy" => {
+                        "BUY" => {
                             market.buy_orders.push(order.clone());
                         },
-                        "sell" => {
+                        "SELL" => {
                             // Sell is a min heap so we reverse the comparison
                             market.sell_orders.push(Reverse(order.clone()));
                         },
@@ -232,6 +250,10 @@ impl Exchange {
                 // Update the state of the exchange.
                 new_price = self.update_state(&order, users, trades);
             },
+            // TODO: We don't want to create markets here anymore.
+            //       The correct way is to directly insert all markets
+            //       from a config file, letting a user create a market
+            //       is not realistic.
             None => {
                 // The market doesn't exist, create it.
                 // buy is a max heap, sell is a min heap.
@@ -240,10 +262,10 @@ impl Exchange {
 
                 // Store order on market, and in users account.
                 match &order.action[..] {
-                    "buy" => {
+                    "BUY" => {
                         buy_heap.push(order.clone());
                     },
-                    "sell" => {
+                    "SELL" => {
                         sell_heap.push(Reverse(order.clone()));
                     },
                     // We can never get here.
@@ -336,8 +358,8 @@ impl Exchange {
     }
     /*
 
-        let buy = String::from("buy");
-        let sell = String::from("sell");
+        let buy = String::from("BUY");
+        let sell = String::from("SELL");
 
         let mut usernames: Vec<String> = Vec::with_capacity(sim.trader_count as usize);
         let mut i = 0;

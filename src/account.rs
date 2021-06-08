@@ -2,6 +2,7 @@ use crate::exchange::requests::Order;
 use crate::exchange::filled::Trade;
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 use postgres::{Client, NoTls};
 
@@ -63,11 +64,16 @@ impl UserAccount {
     }
 
     /* TODO: Order inserts by time executed!
-     * TODO: I would rather this be private. Fix initialization in main.rs.
      * Get this accounts pending orders from the database.
      **/
-    pub fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
-        let query_string = "SELECT o.* from Orders o, PendingOrders P WHERE o.order_ID = p.order_ID AND o.user_ID = (SELECT ID FROM Account where Account.username = $1);";
+    fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
+        let query_string = "\
+SELECT o.* FROM Orders o, PendingOrders P
+WHERE o.order_ID = p.order_ID
+AND o.user_ID =
+    (SELECT ID FROM Account
+     WHERE Account.username = $1)
+ORDER BY o.order_ID;";
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch pending orders failed!") {
             let order_id:       i32  = row.get(0);
             let symbol:         &str = row.get(1);
@@ -81,7 +87,13 @@ impl UserAccount {
             // let time_updated:   i32  = row.get(7); // <---- TODO
 
             // We will just re-insert everything.
-            let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
+            let order = Order::direct(action,
+                                      symbol,
+                                      quantity,
+                                      filled,
+                                      price,
+                                      order_id,
+                                      user_id);
             let market = self.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
             market.insert(order.order_id, order);
         }
@@ -93,7 +105,12 @@ impl UserAccount {
     fn fetch_account_executed_trades(&mut self, conn: &mut Client) {
         self.executed_trades.clear();
         // First, lets get trades where we had our order filled.
-        let query_string = "SELECT * from ExecutedTrades e WHERE e.filled_UID = (SELECT ID from Account where Account.username = $1) ORDER BY e.filled_OID;";
+        let query_string = "\
+SELECT * FROM ExecutedTrades e
+WHERE e.filled_UID =
+    (SELECT ID FROM Account WHERE Account.username = $1)
+ORDER BY e.filled_OID;";
+
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
             let symbol:     &str = row.get(0);
             let action:     &str = row.get(1);
@@ -104,12 +121,24 @@ impl UserAccount {
             let filler_uid: i32  = row.get(6);
             let exchanged:  i32  = row.get(7);
             // let exec_time:  date  = row.get(8); // <--- TODO
-            let trade = Trade::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
+            let trade = Trade::direct(symbol,
+                                      action,
+                                      price,
+                                      filled_oid,
+                                      filled_uid,
+                                      filler_oid,
+                                      filler_uid,
+                                      exchanged);
             self.executed_trades.push(trade);
         }
 
         // Next, lets get trades where we were the filler.
-        let query_string = "SELECT * from ExecutedTrades e WHERE e.filler_UID = (SELECT ID from Account where Account.username = $1) ORDER BY e.filled_OID;";
+        let query_string = "\
+SELECT * FROM ExecutedTrades e
+WHERE e.filler_UID =
+    (SELECT ID FROM Account WHERE Account.username = $1)
+ORDER BY e.filled_OID;";
+
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
             let symbol:     &str = row.get(0);
             let mut action: &str = row.get(1);
@@ -122,13 +151,20 @@ impl UserAccount {
             // let exec_time:  date  = row.get(8); // <--- TODO
 
             // Switch the action because we were the filler.
-            match action.to_string().to_lowercase().as_str() {
-                "buy" => action = "sell",
-                "sell" => action = "buy",
+            match action.to_string().as_str() {
+                "BUY" => action = "SELL",
+                "SELL" => action = "BUY",
                 _ => ()
             }
 
-            let trade = Trade::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
+            let trade = Trade::direct(symbol,
+                                      action,
+                                      price,
+                                      filled_oid,
+                                      filled_uid,
+                                      filler_oid,
+                                      filler_uid,
+                                      exchanged);
             self.executed_trades.push(trade);
         }
     }
@@ -151,8 +187,8 @@ impl UserAccount {
                 for (_, pending) in market.iter() {
                     // If this order will fill a pending order that this account placed:
                     if  (order.action.ne(&pending.action)) &&
-                        ((order.action.as_str() == "buy"  && pending.price <= order.price) ||
-                        (order.action.as_str() == "sell" && order.price <= pending.price))
+                        ((order.action.as_str() == "BUY"  && pending.price <= order.price) ||
+                        (order.action.as_str() == "SELL" && order.price <= pending.price))
                     {
                         return false;
                     }
@@ -163,13 +199,34 @@ impl UserAccount {
         return true;
     }
 
-    /* Check if the user with the given username actually placed this order. */
-    pub fn user_placed_order(&self, symbol: &String, id: i32) -> Option<String> {
+    fn check_order_cache(&self, symbol: &String, id: i32) -> Option<String> {
         if let Some(market) = self.pending_orders.get(symbol) {
             if let Some(order) = market.get(&id) {
                 return Some(order.action.clone()); // buy or sell
             }
         }
+
+        return None;
+    }
+
+    /* Check if the user with the given username actually placed this order. */
+    pub fn user_placed_order(&self, symbol: &String, id: i32) -> Option<String> {
+        match self.check_order_cache(symbol, id) {
+            Some(action) => return Some(action),
+            None => {
+                // Update cache and try again!
+                // self.fetch_account_pending_orders(
+            }
+        }
+        /*
+        // Check the in program cache, if not there, check db?
+        if let Some(market) = self.pending_orders.get(symbol) {
+            if let Some(order) = market.get(&id) {
+                return Some(order.action.clone()); // buy or sell
+            }
+        }
+        */
+
         return None;
     }
 
@@ -230,16 +287,31 @@ impl Users {
     /* TODO: Find a better way to do this.
      * Insert a user to program cache from database
      */
-    pub fn populate_from_db(&mut self, id: i32, username: &str, password: &str) {
-        let account = UserAccount::direct(id, username, password);
-        self.cache_user(account);
+    // pub fn populate_from_db(&mut self, id: i32, username: &str, password: &str) {
+    pub fn populate_from_db(&mut self, conn: &mut Client) {
+        for row in conn.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
+            let id: i32 = row.get(0);
+            let username: &str = row.get(1);
+            let password: &str = row.get(2);
+
+            let account = UserAccount::direct(id, username, password);
+            self.cache_user(account);
+
+            let authenticated = true;
+            if let Ok(account) = self.get_mut(&username.to_string(), authenticated) {
+                account.fetch_account_pending_orders(conn);
+            }
+        }
     }
 
     /* TODO: This is horrible. We need to move populate_from_db and this function
      * into the database.rs file, and group them into 1 function.
      * */
-    pub fn direct_update_total(&mut self, count: i32) {
-        self.total = count;
+    pub fn direct_update_total(&mut self, conn: &mut Client) {
+        for row in conn.query("SELECT count(*) FROM Account", &[]).expect("Something went wrong in the query.") {
+            let count: i64 = row.get(0);
+            self.total = i32::try_from(count).unwrap();
+        }
     }
 
     /* If an account with this username exists, do nothing, otherwise
@@ -501,8 +573,8 @@ impl Users {
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());
 
         // constant strings
-        const BUY: &str = "buy";
-        const SELL: &str = "sell";
+        const BUY: &str = "BUY";
+        const SELL: &str = "SELL";
 
         let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
 
@@ -514,7 +586,7 @@ impl Users {
             // we need to access the filled_by id and switch order type.
             if is_filler {
                 id = trade.filler_oid;
-                if trade.action.as_str() == "buy" {
+                if trade.action.as_str() == "BUY" {
                     update_trade.action = SELL.to_string();
                 } else {
                     update_trade.action = BUY.to_string();

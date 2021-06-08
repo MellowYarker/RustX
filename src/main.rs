@@ -10,7 +10,6 @@ pub use crate::account::{Users};
 
 use std::env;
 use std::process;
-use std::convert::TryFrom;
 use std::io::{self, prelude::*};
 
 use postgres::{Client, NoTls};
@@ -27,27 +26,15 @@ fn main() {
     //       only the one's who are likely to be placing orders.
     //
     //       That, or we can read and maintain users as they request info.
-    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
+    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+        .expect("Failed to connect to Database. Please ensure it is up and running.");
+
     println!("Connected to database.");
-    for row in client.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
-        let id: i32 = row.get(0);
-        let username: &str = row.get(1);
-        let password: &str = row.get(2);
 
-        // TODO:
-        //      VERY IMPORTANT!
-        //      We need to fetch the users pending orders!
-        users.populate_from_db(id, username, password);
-        let authenticated = true;
-        if let Ok(account) = users.get_mut(&username.to_string(), authenticated) {
-            account.fetch_account_pending_orders(&mut client);
-        }
-    }
-
-    for row in client.query("SELECT count(*) FROM Account", &[]).expect("Something went wrong in the query.") {
-        let count: i64 = row.get(0);
-        users.direct_update_total(i32::try_from(count).unwrap());
-    }
+    // gets all users and reads their pending orders.
+    users.populate_from_db(&mut client);
+    // Read in the total number of users.
+    users.direct_update_total(&mut client);
 
     /* TODO
      *  We need to populate our exchange with the relevant data from the database.
@@ -61,6 +48,7 @@ fn main() {
     database::populate_market_statistics(&mut exchange, &mut client);
     // Fill the statistics for the exchange
     database::populate_exchange_statistics(&mut exchange, &mut client);
+
     println!("Populated users, markets, and statistics.");
 
     let argument = match parser::command_args(env::args()) {

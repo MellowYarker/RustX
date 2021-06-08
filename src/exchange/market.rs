@@ -166,11 +166,11 @@ impl Market {
         let mut new_price = None;
         match &order.action[..] {
             // New buy order, try to fill some existing sells
-            "buy" => {
+            "BUY" => {
                 new_price = self.fill_buy_order(order, &mut trades);
             },
             // New sell order, try to fill some existing buys
-            "sell" => {
+            "SELL" => {
                 new_price = self.fill_sell_order(order, &mut trades);
             },
             _ => () // Not possible

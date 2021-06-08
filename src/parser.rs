@@ -92,7 +92,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
             if let 6 = words.len() {
                 // Note that we do not provide an order ID (arg 4 is None).
                 // This value actually gets set later.
-                let order = Order::from( words[0].to_string(),
+                let order = Order::from( words[0].to_string().to_uppercase(),
                                          words[1].to_string().to_uppercase(),
                                          words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),// TODO we shouldn't panic here
                                          words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),     // TODO we shouldn't panic here
@@ -166,7 +166,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
     match request {
         Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
-                "buy" | "sell" => {
+                "BUY" | "SELL" => {
                     // Try to get the account
                     match users.authenticate(&username, &password, conn) {
                         Ok(account) => {
