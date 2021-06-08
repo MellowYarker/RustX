@@ -174,7 +174,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                             order.user_id = account.id;
                             if account.validate_order(&order) {
                                 &exchange.submit_order_to_market(users, order.clone(), &username, true);
-                                &exchange.show_market(&order.security);
+                                &exchange.show_market(&order.symbol);
                             } else {
                                 eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
                             }

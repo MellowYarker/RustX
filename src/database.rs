@@ -74,8 +74,8 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
         let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
         // Add the order we found to the market.
         // If a new market was created, update the exchange.
-        if let Some(market) = insert_to_market(exchange.live_orders.get_mut(&order.security), &order) {
-            exchange.live_orders.insert(order.security.clone(), market);
+        if let Some(market) = insert_to_market(exchange.live_orders.get_mut(&order.symbol), &order) {
+            exchange.live_orders.insert(order.symbol.clone(), market);
         };
     }
 }

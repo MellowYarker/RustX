@@ -57,7 +57,7 @@ impl Exchange {
      * Returns Some(price) if trade occured, or None.
      */
     fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>) -> Option<f64> {
-        let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
+        let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
 
         // Update the counters and the price
         match &order.action[..] {
@@ -124,7 +124,7 @@ impl Exchange {
 
         // Default initialize the past orders market if it doesn't already exist
         let default_type: Vec<Trade> = Vec::new();
-        let market = self.trades.entry(new_orders[0].security.clone()).or_insert(default_type);
+        let market = self.trades.entry(new_orders[0].symbol.clone()).or_insert(default_type);
         market.append(new_orders);
     }
 
@@ -206,7 +206,7 @@ impl Exchange {
         order.order_id = self.total_orders + 1;
 
         // Try to access the security in the HashMap
-        match self.live_orders.get_mut(&order.security) {
+        match self.live_orders.get_mut(&order.symbol) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
                 let trades = market.fill_existing_orders(&mut order);
@@ -226,7 +226,7 @@ impl Exchange {
                     }
 
                     // Add to this accounts pending orders.
-                    let current_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+                    let current_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                     current_market.insert(order.order_id, order.clone());
                 }
                 // Update the state of the exchange.
@@ -252,10 +252,10 @@ impl Exchange {
 
                 // Create the new market
                 let new_market = Market::new(buy_heap, sell_heap);
-                self.live_orders.insert(order.security.clone(), new_market);
+                self.live_orders.insert(order.symbol.clone(), new_market);
 
                 // Add the symbol name and order to this accounts pending orders.
-                let new_account_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+                let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                 new_account_market.insert(order.order_id, order.clone());
 
                 // Since this is the first order, initialize the stats for this security.

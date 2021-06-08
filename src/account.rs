@@ -81,7 +81,7 @@ impl UserAccount {
 
             // We will just re-insert everything.
             let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
-            let market = self.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
+            let market = self.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
             market.insert(order.order_id, order);
         }
     }
@@ -144,7 +144,7 @@ impl UserAccount {
      *  this user. Otherwise, returns false.
      **/
     pub fn validate_order(&self, order: &Order) -> bool {
-        match self.pending_orders.get(&order.security) {
+        match self.pending_orders.get(&order.symbol) {
             // We only care about the market that `order` is being submitted to.
             Some(market) => {
                 for (_, pending) in market.iter() {
@@ -510,7 +510,7 @@ impl Users {
         const BUY: &str = "buy";
         const SELL: &str = "sell";
 
-        let market = account.pending_orders.entry(trades[0].security.clone()).or_insert(HashMap::new());
+        let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
 
         for trade in trades.iter() {
             let mut id = trade.filled_oid;

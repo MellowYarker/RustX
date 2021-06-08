@@ -3,8 +3,8 @@ use crate::account::UserAccount;
 // An order type for a security
 #[derive(Debug)]
 pub struct Order {
-    pub action: String,     // BUY or SELL
-    pub security: String,   // Symbol
+    pub action: String,     // buy or sell
+    pub symbol: String,     // Symbol of this security
     pub quantity: i32,
     pub filled: i32,        // Quantity filled so far
     pub price: f64,
@@ -14,13 +14,13 @@ pub struct Order {
 
 impl Order {
     // Used when reading a user from the frontend
-    pub fn from(action: String, security: String, quantity: i32, price: f64, user_id: Option<i32>) -> Self {
+    pub fn from(action: String, symbol: String, quantity: i32, price: f64, user_id: Option<i32>) -> Self {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
 
         Order {
             action,
-            security,
+            symbol,
             quantity,
             filled: 0,
             price,
@@ -30,14 +30,14 @@ impl Order {
     }
 
     // Used when reading an existing user from the database
-    pub fn direct(action: &str, security: &str, quantity: i32, filled: i32, price: f64, order_id: i32, user_id: i32) -> Self {
+    pub fn direct(action: &str, symbol: &str, quantity: i32, filled: i32, price: f64, order_id: i32, user_id: i32) -> Self {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
 
         // TODO: Need to include order status and time placed/updated.
         Order {
             action: action.to_string().clone(),
-            security: security.to_string().clone(),
+            symbol: symbol.to_string().clone(),
             quantity,
             filled,
             price,
@@ -51,7 +51,7 @@ impl Clone for Order {
     fn clone(&self) -> Self {
         Order {
             action: self.action.clone(),
-            security: self.security.clone(),
+            symbol: self.symbol.clone(),
             ..*self
         }
     }
@@ -59,7 +59,7 @@ impl Clone for Order {
 
 impl Ord for Order {
     fn cmp(&self, other: &Self) -> Ordering {
-        if let Ordering::Equal = &self.security.cmp(&other.security) {
+        if let Ordering::Equal = &self.symbol.cmp(&other.symbol) {
             if self.price < other.price {
                 return Ordering::Less;
             } else if other.price < self.price {
@@ -80,7 +80,7 @@ impl PartialOrd for Order {
 
 impl PartialEq for Order {
     fn eq(&self, other: &Self) -> bool {
-        &self.security == &other.security && self.price == other.price
+        &self.symbol == &other.symbol && self.price == other.price
     }
 }
 

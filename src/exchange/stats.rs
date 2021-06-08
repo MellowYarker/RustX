@@ -14,7 +14,7 @@ pub struct SecStat {
 impl SecStat {
     pub fn from(order: &Order) -> Self {
 
-        let symbol = order.security.clone();
+        let symbol = order.symbol.clone();
 
         let total_buys = match &order.action[..] {
             "buy" => 1,
