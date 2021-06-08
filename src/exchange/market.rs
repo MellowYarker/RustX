@@ -1,6 +1,6 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use crate::exchange::{Order, FilledOrder};
+use crate::exchange::{Order, Trade};
 
 // The market for a security
 #[derive(Debug)]
@@ -18,11 +18,13 @@ impl Market {
     }
 
     /* Given a buy order, try to fill it with existing sell orders in the market.
-     * Add any orders that are completely filled into the filled_orders vector.
+     *
+     * If orders are completely or partial filled, turn them into Trades and add them
+     * to the trades vector.
      *
      * Returns the lowest sell price that was filled or None if no trade occured.
      */
-    pub fn fill_buy_order(&mut self, highest_bid: &mut Order, filled_orders: &mut Vec<FilledOrder>) -> Option<f64> {
+    pub fn fill_buy_order(&mut self, highest_bid: &mut Order, trades: &mut Vec<Trade>) -> Option<f64> {
 
         // No trades by default
         let mut new_price = None;
@@ -59,7 +61,7 @@ impl Market {
 
                     // Add this trade
                     highest_bid.filled += amount_traded;
-                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer.0, &highest_bid, amount_traded));
+                    trades.push(Trade::order_to_trade(&lowest_offer.0, &highest_bid, amount_traded));
                 } else {
                     // The buy order was completely filled.
                     let amount_traded = highest_bid_remaining;
@@ -70,7 +72,7 @@ impl Market {
 
                     // Newly placed order was filled
                     highest_bid.filled += amount_traded;
-                    filled_orders.push(FilledOrder::order_to_filled_order(&lowest_offer, &highest_bid, amount_traded));
+                    trades.push(Trade::order_to_trade(&lowest_offer, &highest_bid, amount_traded));
                 }
             } else {
                 // Highest buy doesn't reach lowest sell.
@@ -82,11 +84,13 @@ impl Market {
     }
 
     /* Given a sell order, try to fill it with existing buy orders in the market.
-     * Add any orders that are completely filled into the filled_orders vector.
+     *
+     * If orders are completely or partial filled, turn them into Trades and add them
+     * to the trades vector.
      *
      * Returns the highest buy price that was filled or None if no trade occured.
     */
-    pub fn fill_sell_order(&mut self, lowest_offer: &mut Order, filled_orders: &mut Vec<FilledOrder>) -> Option<f64> {
+    pub fn fill_sell_order(&mut self, lowest_offer: &mut Order, trades: &mut Vec<Trade>) -> Option<f64> {
         // No trades by default
         let mut new_price = None;
 
@@ -123,7 +127,7 @@ impl Market {
                     lowest_offer.filled += amount_traded;
 
                     // Add the updated buy to the Vector we return
-                    filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &lowest_offer, amount_traded));
+                    trades.push(Trade::order_to_trade(&highest_bid, &lowest_offer, amount_traded));
                 } else {
                     // The sell order was completely filled.
                     let amount_traded = lowest_sell_remaining;
@@ -134,7 +138,7 @@ impl Market {
 
                     // Newly placed order was filled
                     lowest_offer.filled += amount_traded;
-                    filled_orders.push(FilledOrder::order_to_filled_order(&highest_bid, &lowest_offer, amount_traded));
+                    trades.push(Trade::order_to_trade(&highest_bid, &lowest_offer, amount_traded));
                 }
             } else {
                 // Lowest sell doesn't reach highest buy.
@@ -155,19 +159,19 @@ impl Market {
     // caller function.
     //
     // On failure, we return None.
-    pub fn fill_existing_orders(&mut self, order: &mut Order) -> Option<Vec<FilledOrder>> {
+    pub fn fill_existing_orders(&mut self, order: &mut Order) -> Option<Vec<Trade>> {
         // We will populate this if any orders get filled.
-        let mut filled_orders: Vec<FilledOrder> = Vec::new();
+        let mut trades: Vec<Trade> = Vec::new();
 
         let mut new_price = None;
         match &order.action[..] {
             // New buy order, try to fill some existing sells
             "buy" => {
-                new_price = self.fill_buy_order(order, &mut filled_orders);
+                new_price = self.fill_buy_order(order, &mut trades);
             },
             // New sell order, try to fill some existing buys
             "sell" => {
-                new_price = self.fill_sell_order(order, &mut filled_orders);
+                new_price = self.fill_sell_order(order, &mut trades);
             },
             _ => () // Not possible
         }
@@ -176,7 +180,7 @@ impl Market {
         match new_price {
             // Price change means orders were filled
             Some(_) => {
-                return Some(filled_orders);
+                return Some(trades);
             },
             None => return None
         }

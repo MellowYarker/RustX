@@ -5,7 +5,7 @@ pub mod requests;
 pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation};
 
 pub mod filled;
-pub use crate::exchange::filled::FilledOrder;
+pub use crate::exchange::filled::Trade;
 
 pub mod stats;
 pub use crate::exchange::stats::SecStat;
@@ -24,9 +24,9 @@ pub enum PriceError {
 // Represents our exchange's state.
 #[derive(Debug)]
 pub struct Exchange {
-    pub live_orders: HashMap<String, Market>,               // Orders on the market
-    pub filled_orders: HashMap<String, Vec<FilledOrder>>,   // Orders that have been filled
-    pub statistics: HashMap<String, SecStat>,               // The general statistics of each symbol
+    pub live_orders: HashMap<String, Market>,       // Orders on the market
+    pub trades: HashMap<String, Vec<Trade>>, // Orders that have been filled
+    pub statistics: HashMap<String, SecStat>,       // The general statistics of each symbol
     pub total_orders: i32
 }
 
@@ -34,11 +34,11 @@ impl Exchange {
     // Create a new exchange on startup
     pub fn new() -> Self {
         let live: HashMap<String, Market> = HashMap::new();
-        let filled: HashMap<String, Vec<FilledOrder>> = HashMap::new();
+        let filled: HashMap<String, Vec<Trade>> = HashMap::new();
         let stats: HashMap<String, SecStat> = HashMap::new();
         Exchange {
             live_orders: live,
-            filled_orders: filled,
+            trades: filled,
             statistics: stats,
             total_orders: 0
         }
@@ -56,7 +56,7 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>) -> Option<f64> {
         let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
 
         // Update the counters and the price
@@ -73,11 +73,11 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(mut filled_orders) = executed_trades {
-            let price = filled_orders[filled_orders.len() - 1].price;
+        if let Some(mut trades) = executed_trades {
+            let price = trades[trades.len() - 1].price;
             new_price = Some(price);
             stats.update_price(price);
-            stats.update_filled_orders(&filled_orders);
+            stats.update_trades(&trades);
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
              *
@@ -88,8 +88,8 @@ impl Exchange {
              * (think mutex locks, and maybe write filled orders to a buffer
              * in the mean time?)
              */
-            users.update_account_orders(&filled_orders);
-            self.extend_past_orders(&mut filled_orders);
+            users.update_account_orders(&trades);
+            self.extend_past_orders(&mut trades);
         };
 
         self.total_orders += 1;
@@ -120,11 +120,11 @@ impl Exchange {
     }
 
     // Extends the past orders vector
-    fn extend_past_orders(&mut self, new_orders: &mut Vec<FilledOrder>) {
+    fn extend_past_orders(&mut self, new_orders: &mut Vec<Trade>) {
 
         // Default initialize the past orders market if it doesn't already exist
-        let default_type: Vec<FilledOrder> = Vec::new();
-        let market = self.filled_orders.entry(new_orders[0].security.clone()).or_insert(default_type);
+        let default_type: Vec<Trade> = Vec::new();
+        let market = self.trades.entry(new_orders[0].security.clone()).or_insert(default_type);
         market.append(new_orders);
     }
 
@@ -172,7 +172,7 @@ impl Exchange {
 
     // Shows the history of orders in this market.
     pub fn show_market_history(&self, symbol: &String) {
-        let market = self.filled_orders.get(symbol).expect("The symbol that was requested either doesn't exist or has no past trades.");
+        let market = self.trades.get(symbol).expect("The symbol that was requested either doesn't exist or has no past trades.");
 
         println!("\nMarket History: ${}", symbol);
         println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
@@ -209,7 +209,7 @@ impl Exchange {
         match self.live_orders.get_mut(&order.security) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                let filled_orders = market.fill_existing_orders(&mut order);
+                let trades = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
                 // as well as the users account.
@@ -230,7 +230,7 @@ impl Exchange {
                     current_market.insert(order.order_id, order.clone());
                 }
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, filled_orders);
+                new_price = self.update_state(&order, users, trades);
             },
             None => {
                 // The market doesn't exist, create it.

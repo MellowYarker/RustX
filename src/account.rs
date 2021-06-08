@@ -1,5 +1,5 @@
 use crate::exchange::requests::Order;
-use crate::exchange::filled::FilledOrder;
+use crate::exchange::filled::Trade;
 
 use std::collections::HashMap;
 
@@ -26,13 +26,13 @@ pub struct UserAccount {
      *      2. Fast access to orders in each market (see validate_order function).
     **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
-    pub executed_trades: Vec<FilledOrder>                       // Trades that have occurred.
+    pub executed_trades: Vec<Trade>                             // Trades that have occurred.
 }
 
 impl UserAccount {
     pub fn from(username: &String, password: &String) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        let trades: Vec<FilledOrder> = Vec::new();
+        let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.clone(),
             password: password.clone(),
@@ -46,7 +46,7 @@ impl UserAccount {
      * */
     pub fn direct(id: i32, username: &str, password: &str) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        let trades: Vec<FilledOrder> = Vec::new();
+        let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.to_string().clone(),
             password: password.to_string().clone(),
@@ -103,7 +103,7 @@ impl UserAccount {
             let filler_uid: i32  = row.get(6);
             let exchanged:  i32  = row.get(7);
             // let exec_time:  date  = row.get(8); // <--- TODO
-            let trade = FilledOrder::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
+            let trade = Trade::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
             self.executed_trades.push(trade);
         }
 
@@ -127,7 +127,7 @@ impl UserAccount {
                 _ => ()
             }
 
-            let trade = FilledOrder::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
+            let trade = Trade::direct(symbol, action, price, filled_oid, filled_uid, filler_oid, filler_uid, exchanged);
             self.executed_trades.push(trade);
         }
     }
@@ -493,7 +493,7 @@ impl Users {
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, id: i32, trades: &Vec<FilledOrder>, is_filler: bool) {
+    fn update_single_user(&mut self, id: i32, trades: &Vec<Trade>, is_filler: bool) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -549,10 +549,10 @@ impl Users {
         }
     }
 
-    /* Given a vector of Filled Orders, update all the accounts
+    /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, trades: &Vec<FilledOrder>) {
+    pub fn update_account_orders(&mut self, trades: &Vec<Trade>) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
@@ -561,7 +561,7 @@ impl Users {
          **/
 
         // Map of {users: freshly executed trades}
-        let mut update_map: HashMap<i32, Vec<FilledOrder>> = HashMap::new();
+        let mut update_map: HashMap<i32, Vec<Trade>> = HashMap::new();
 
         // Fill update_map
         for trade in trades.iter() {

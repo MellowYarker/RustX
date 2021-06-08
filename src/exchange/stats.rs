@@ -1,5 +1,5 @@
 use crate::exchange::Order;
-use crate::exchange::filled::FilledOrder;
+use crate::exchange::filled::Trade;
 // Statistics about a security
 #[derive(Debug)]
 pub struct SecStat {
@@ -71,10 +71,10 @@ impl SecStat {
         }
     }
 
-    // Iterates over the vector of filled orders and
+    // Iterates over the vector of trades and
     // updates the filled buy or sell count.
-    pub fn update_filled_orders(&mut self, filled_orders: &Vec<FilledOrder>) {
-        for order in filled_orders {
+    pub fn update_trades(&mut self, trades: &Vec<Trade>) {
+        for order in trades {
             match &order.action[..] {
                 "buy" => {
                     self.filled_buys += 1;

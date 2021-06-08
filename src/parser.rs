@@ -227,7 +227,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 },
                 // Show the past orders of this market.
                 "history" => {
-                    if exchange.filled_orders.contains_key(&req.symbol) {
+                    if exchange.trades.contains_key(&req.symbol) {
                         exchange.show_market_history(&req.symbol);
                     } else {
                         println!("The symbol that was requested either doesn't exist or has no past trades.");

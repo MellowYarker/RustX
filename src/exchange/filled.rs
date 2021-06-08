@@ -6,7 +6,7 @@ use crate::exchange::Order;
  *       Trade indicates that it might be *partially* filled.
  **/
 #[derive(Debug)]
-pub struct FilledOrder {
+pub struct Trade {
     pub action: String,
     pub security: String,
     pub price: f64,         // price at which this trade was occured
@@ -17,9 +17,9 @@ pub struct FilledOrder {
     pub exchanged: i32      // the amount of shares exchanged
 }
 
-impl FilledOrder {
+impl Trade {
     fn from(action: &String, security: &String, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32) -> Self {
-        FilledOrder {
+        Trade {
             action: action.clone(),
             security: security.clone(),
             price,
@@ -31,14 +31,14 @@ impl FilledOrder {
         }
     }
 
-    // Create a FilledOrder from a pair of Orders.
-    pub fn order_to_filled_order(pending: &Order, filler: &Order, exchanged: i32) -> Self {
-        FilledOrder::from(&pending.action, &pending.security, pending.price, pending.order_id, pending.user_id.unwrap(), filler.order_id, filler.user_id.unwrap(), exchanged)
+    // Create a Trade from a pair of Orders.
+    pub fn order_to_trade(pending: &Order, filler: &Order, exchanged: i32) -> Self {
+        Trade::from(&pending.action, &pending.security, pending.price, pending.order_id, pending.user_id.unwrap(), filler.order_id, filler.user_id.unwrap(), exchanged)
     }
 
     /* Used when reading data directly from the database. */
     pub fn direct(symbol: &str, action: &str, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32) -> Self {
-        FilledOrder {
+        Trade {
             security: symbol.to_string().clone(),
             action: action.to_string().clone(),
             price,
@@ -51,9 +51,9 @@ impl FilledOrder {
     }
 }
 
-impl Clone for FilledOrder {
+impl Clone for Trade {
     fn clone(&self) -> Self {
-        FilledOrder {
+        Trade {
             action: self.action.clone(),
             security: self.security.clone(),
             ..*self
