@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 
 use postgres::{Client, NoTls};
+use crate::database;
 
 // Error types for authentication
 pub enum AuthError<'a> {
@@ -287,7 +288,6 @@ impl Users {
     /* TODO: Find a better way to do this.
      * Insert a user to program cache from database
      */
-    // pub fn populate_from_db(&mut self, id: i32, username: &str, password: &str) {
     pub fn populate_from_db(&mut self, conn: &mut Client) {
         for row in conn.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
             let id: i32 = row.get(0);
@@ -559,7 +559,7 @@ impl Users {
     /* Update this users pending_orders and executed_trades.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, id: i32, trades: &Vec<Trade>, is_filler: bool) {
+    fn update_single_user(&mut self, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -577,6 +577,9 @@ impl Users {
         const SELL: &str = "SELL";
 
         let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
+
+        // Query strings that we will extend.
+        let mut update_filled_query_string = String::new();
 
         for trade in trades.iter() {
             let mut id = trade.filled_oid;
@@ -598,10 +601,13 @@ impl Users {
                 Some(order) => {
                     if trade.exchanged == (order.quantity - order.filled) {
                         entries_to_remove.push(order.order_id); // order completely filled
-                    } else if !is_filler{
+                    } else if !is_filler {
                         // Don't update the filler's filled count,
                         // new orders are added to accounts in submit_order_to_market.
                         order.filled += trade.exchanged; // order partially filled
+                        // Extend our query string
+                        update_filled_query_string
+                            .push_str(format!["UPDATE Orders set filled=filled+{} WHERE order_id={}; ", order.filled, order.order_id].as_str());
                     }
                     account.executed_trades.push(update_trade);
                 },
@@ -609,10 +615,16 @@ impl Users {
             }
         }
 
+        // For each trade, update `filled` in Orders table.
+        database::update_filled_counts(&update_filled_query_string, conn);
+
         // Remove any completed orders from the accounts pending orders.
         for i in &entries_to_remove {
             market.remove(&i);
         }
+        // Remove all the completed orders from the database's pending table.
+        // Sets Orders to complete, and sets filled = quantity.
+        database::delete_pending_orders(&entries_to_remove, conn);
     }
 
     /* Given a vector of Trades, update all the accounts
@@ -626,6 +638,9 @@ impl Users {
          *  2. Update account of user who's order filled the old orders.
          **/
 
+        let mut conn = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+            .expect("Failed to connect to Database. Please ensure it is up and running.");
+
         // Map of {users: freshly executed trades}
         let mut update_map: HashMap<i32, Vec<Trade>> = HashMap::new();
 
@@ -638,10 +653,13 @@ impl Users {
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(*user_id, new_trades, false);
+            self.update_single_user(*user_id, new_trades, false, &mut conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(trades[0].filler_uid, &trades, true);
+        self.update_single_user(trades[0].filler_uid, &trades, true, &mut conn);
+
+        // For each trade, insert into ExecutedTrades table.
+        database::write_insert_trades(&trades, &mut conn);
     }
 
     pub fn print_all(&self) {

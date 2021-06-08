@@ -62,16 +62,14 @@ impl Exchange {
      * Returns Some(price) if trade occured, or None.
      */
     fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>) -> Option<f64> {
-        let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
-        // TODO:
-        //  1. Add the new order to the Orders table
-        //  2. Add it to pendingOrders if it's not COMPLETE
-        //  3. If trades occured, update market price in DB
-        //  4. Update the orders that were filled + insert Trades to ExecutedTrades
 
         let mut conn = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
             .expect("Failed to connect to Database. Please ensure it is up and running.");
 
+        let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
+
+        // Write the newly placed order to the Orders table.
+        // If Order isn't complete, adds to pending as well.
         database::write_insert_order(order, &mut conn);
 
         // Update the counters and the price
@@ -106,6 +104,7 @@ impl Exchange {
              * (think mutex locks, and maybe write filled orders to a buffer
              * in the mean time?)
              */
+            // Updates database too.
             users.update_account_orders(&trades);
             self.extend_past_orders(&mut trades);
         };

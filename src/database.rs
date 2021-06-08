@@ -2,7 +2,7 @@ use postgres::Client;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 
-use crate::exchange::{Exchange, Market, Order, SecStat};
+use crate::exchange::{Exchange, Market, Order, SecStat, Trade};
 
 // Directly inserts this order to the market
 // If the market didn't exist, we will return it as Some(Market)
@@ -110,7 +110,7 @@ pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
  *        a list of markets to read from.
  **/
 pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) {
-    for row in conn.query("SELECT total_orders FROM Exchange_Stats", &[])
+    for row in conn.query("SELECT total_orders FROM ExchangeStats", &[])
         .expect("Something went wrong in the query.") {
 
         let total_orders: i32 = row.get(0);
@@ -119,7 +119,9 @@ pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) 
 }
 
 /* Writes to the database.
- * This function inserts an order to the Orders table.
+ * This function inserts an order to the Orders table,
+ * and will insert it to the PendingOrders table if the
+ * order is not COMPLETE.
  **/
 pub fn write_insert_order(order: &Order, conn: &mut Client) {
     let query_string = "\
@@ -127,11 +129,14 @@ INSERT INTO Orders
 (order_ID, symbol, action, quantity, filled, price, user_ID, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
 
-    let mut status: String;
+    let status: String;
+    let mut add_to_pending = false;
+
     if order.quantity == order.filled {
         status = String::from("COMPLETE");
     } else {
         status = String::from("PENDING");
+        add_to_pending = true;
     }
     if let Err(e) = conn.query(query_string, &[ &order.order_id,
                                                 &order.symbol,
@@ -147,6 +152,32 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Order Insert query!");
     };
+    if add_to_pending {
+        let query_string = "INSERT INTO PendingOrders VALUES ($1);";
+        if let Err(e) = conn.query(query_string, &[&order.order_id]) {
+            eprintln!("{:?}", e);
+            panic!("Something went wrong with the PendingOrder Insert query!");
+        };
+    }
+
+    // Update the exchange total orders
+    let query_string = "UPDATE ExchangeStats set total_orders=$1;";
+    if let Err(e) = conn.query(query_string, &[&order.order_id]) {
+        eprintln!("{:?}", e);
+        panic!("Something went wrong with the exchange total orders update query!");
+    }
+
+    let query_string: String;
+    match &order.action[..] {
+        "BUY" => query_string = format!["UPDATE Markets set total_{}=total_{} + 1 where symbol=$1;", "buys", "buys"],
+        "SELL" => query_string = format!["UPDATE Markets set total_{}=total_{} + 1 where symbol=$1;", "sells", "sells"],
+        _ => panic!("We should never get here.")
+    }
+
+    if let Err(e) = conn.query(query_string.as_str(), &[&order.symbol]) {
+        eprintln!("{:?}", e);
+        panic!("Something went wrong with the Market total count update query!");
+    }
 }
 
 /* Writes to the database.
@@ -169,4 +200,64 @@ WHERE Markets.symbol = $6;";
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Market Stats Update query!");
     };
+}
+
+/* Writes to the database.
+ * This function inserts the trades in the vector into the database.
+ */
+pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
+
+    let mut query_string = String::new();
+    for trade in trades.iter() {
+        query_string.push_str(format!["\
+INSERT INTO ExecutedTrades
+(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged)
+VALUES ('{}', '{}', {}, {}, {}, {}, {}, {}); ", trade.symbol,
+                                                trade.action,
+                                                trade.price,
+                                                trade.filled_oid,
+                                                trade.filled_uid,
+                                                trade.filler_oid,
+                                                trade.filler_uid,
+                                                trade.exchanged,
+                                    ].as_str());
+    }
+    if let Err(e) = conn.query(query_string.as_str(), &[]) {
+        eprintln!("{:?}", e);
+        panic!("Insert Trades query failed!");
+    }
+
+}
+
+/* This function takes a string reference, which consists of SQL
+ * statements that update the filled counts for relevant rows.
+ * */
+pub fn update_filled_counts(query_string: &String, conn: &mut Client) {
+    if let Err(e) = conn.query(query_string.as_str(), &[]) {
+        eprintln!("{:?}", e);
+        panic!("Filled Counts Update query failed!");
+    }
+}
+
+/* Deletes order's from PendingOrders table.
+ * Will set order status to COMPLETE and set filled to quantity.
+ * */
+pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client) {
+    // TODO: We can run this all in parallel!
+    let mut delete_query_string = String::new();
+    let mut update_query_string = String::new();
+    for order in order_ids.iter() {
+        delete_query_string.push_str(format!["DELETE FROM PendingOrders WHERE order_id={}; ", order].as_str());
+        update_query_string.push_str(format!["UPDATE Orders SET status='COMPLETE', filled=quantity WHERE order_id={}; ", order].as_str());
+    }
+    if let Err(e) = conn.query(delete_query_string.as_str(), &[]) {
+        eprintln!("{:?}", e);
+        eprintln!("\n{}", delete_query_string);
+        panic!("PendingOrders Delete query failed!", );
+    }
+    if let Err(e) = conn.query(update_query_string.as_str(), &[]) {
+        eprintln!("{:?}", e);
+        eprintln!("\n{}", update_query_string);
+        panic!("Order Status Update query failed!", );
+    }
 }

@@ -18,18 +18,16 @@ CREATE TABLE Orders (
     time_placed     date,
     time_updated    date,
     PRIMARY KEY(order_ID),
-    /* CONSTRAINT fk_account */
-        FOREIGN KEY(user_ID)
-            REFERENCES Account(ID)
+    FOREIGN KEY(user_ID)
+        REFERENCES Account(ID)
 );
 
 
 CREATE TABLE PendingOrders (
     order_ID        int,
     PRIMARY KEY(order_ID),
-    /* CONSTRAINT fk_order */
-        FOREIGN KEY(order_ID)
-            REFERENCES Orders(order_ID)
+    FOREIGN KEY(order_ID)
+        REFERENCES Orders(order_ID)
 );
 
 CREATE TABLE ExecutedTrades (
@@ -45,18 +43,14 @@ CREATE TABLE ExecutedTrades (
     -- Will never have 2+ trades with the same
     -- (filled, filler) order id pair
     PRIMARY KEY(filled_OID, filler_OID),
-    /* CONSTRAINT fk_Order_filled */
-        FOREIGN KEY(filled_OID)
-            REFERENCES Orders(order_ID),
-    /* CONSTRAINT fk_Order_filler */
-        FOREIGN KEY(filler_OID)
-            REFERENCES Orders(order_ID),
-    /* CONSTRAINT fk_Account_filled */
-        FOREIGN KEY(filled_UID)
-            REFERENCES Account(ID),
-    /* CONSTRAINT fk_Account_filler */
-        FOREIGN KEY(filler_UID)
-            REFERENCES Account(ID)
+    FOREIGN KEY(filled_OID)
+        REFERENCES Orders(order_ID),
+    FOREIGN KEY(filler_OID)
+        REFERENCES Orders(order_ID),
+    FOREIGN KEY(filled_UID)
+        REFERENCES Account(ID),
+    FOREIGN KEY(filler_UID)
+        REFERENCES Account(ID)
 );
 
 CREATE TABLE Markets (
@@ -73,6 +67,6 @@ CREATE TABLE Markets (
 -- We have to store the count in a table because postgresql
 -- doesn't store row count as metadata, getting row count
 -- with SELECT count(*) from Orders; would be prohibitively expensive
-CREATE TABLE Exchange_Stats (
+CREATE TABLE ExchangeStats (
     total_orders    int
 );
