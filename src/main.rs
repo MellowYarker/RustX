@@ -38,6 +38,10 @@ fn main() {
         //      VERY IMPORTANT!
         //      We need to fetch the users pending orders!
         users.populate_from_db(id, username, password);
+        let authenticated = true;
+        if let Ok(account) = users.get_mut(&username.to_string(), authenticated) {
+            account.fetch_account_pending_orders(&mut client);
+        }
     }
 
     for row in client.query("SELECT count(*) FROM Account", &[]).expect("Something went wrong in the query.") {

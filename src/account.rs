@@ -63,9 +63,10 @@ impl UserAccount {
     }
 
     /* TODO: Order inserts by time executed!
+     * TODO: I would rather this be private. Fix initialization in main.rs.
      * Get this accounts pending orders from the database.
      **/
-    fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
+    pub fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
         let query_string = "SELECT o.* from Orders o, PendingOrders P WHERE o.order_ID = p.order_ID AND o.user_ID = (SELECT ID FROM Account where Account.username = $1);";
         for row in conn.query(query_string, &[&self.username]).expect("Query to fetch pending orders failed!") {
             let order_id:       i32  = row.get(0);
@@ -230,9 +231,8 @@ impl Users {
      * Insert a user to program cache from database
      */
     pub fn populate_from_db(&mut self, id: i32, username: &str, password: &str) {
-        let acc = UserAccount::direct(id, username, password);
-        self.id_map.insert(id, username.to_string().clone());
-        self.users.insert(username.to_string().clone(), acc);
+        let account = UserAccount::direct(id, username, password);
+        self.cache_user(account);
     }
 
     /* TODO: This is horrible. We need to move populate_from_db and this function
@@ -250,8 +250,6 @@ impl Users {
         if self.users.contains_key(&account.username) {
             return None;
         } else {
-            // TODO: Check database, and insert on success.
-            println!("Checking database!");
             let query_string = "SELECT ID FROM Account WHERE Account.username=$1";
             for row in conn.query(query_string, &[&account.username]) {
                 // If a user exists, return None
@@ -259,7 +257,6 @@ impl Users {
                     return None;
                 }
             }
-            println!("User doesn't exist so we're going to add now.");
             // User doesn't exist, so create a new one.
             let mut account = account;
             self.total = account.set_id(&self);
@@ -270,8 +267,7 @@ impl Users {
             match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
                 Ok(_) => {
                     // Cache in program
-                    self.id_map.insert(account.id.unwrap(), account.username.clone());
-                    self.users.insert(account.username.clone(), account);
+                    self.cache_user(account);
                     return Some(self.total);
                 },
                 Err(e) => {
@@ -370,8 +366,6 @@ impl Users {
                     // We should probably make sure the in-mem pending orders are consistent w/ the database!
                     account.fetch_account_pending_orders(conn);
                     self.cache_user(account);
-                    // self.id_map.insert(account.id.unwrap(), account.username.clone());
-                    // self.users.insert(account.username.clone(), account);
                 },
                 Err(e) => return Err(e)
             }
