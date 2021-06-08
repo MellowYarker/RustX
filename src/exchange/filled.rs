@@ -1,9 +1,7 @@
 use crate::exchange::Order;
 
-/*
- * TODO: Perhaps a more fitting name is "Trade".
- *       FilledOrder might imply the entire order is filled.
- *       Trade indicates that it might be *partially* filled.
+/* Note that a trade does not indicate a full order was processed!
+ * It may have only filled part of an order.
  **/
 #[derive(Debug)]
 pub struct Trade {
