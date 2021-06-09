@@ -290,14 +290,14 @@ impl Exchange {
      *       whatever *remains* of an order, i.e any fulfilled portion
      *       cannot be cancelled.
      * */
-    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users) -> Result<(), String>{
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, conn: &mut Client) -> Result<(), String>{
         if let Ok(account) = users.get(&(order_to_cancel.username), true) {
             // 1. Ensure the order belongs to the user
-            if let Some(action) = account.user_placed_order(&order_to_cancel.symbol, order_to_cancel.order_id) {
+            if let Some(action) = account.user_placed_pending_order(&order_to_cancel.symbol, order_to_cancel.order_id, conn) {
                 if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
                     // 2. Remove order from the market
-                    match action.as_str() {
-                        "buy" => {
+                    match &action[..] {
+                        "BUY" => {
                             // Move all the orders except the one we're cancelling to a new heap,
                             // then move it back to the buy heap.
                             let new_size = market.buy_orders.len() - 1;
@@ -307,7 +307,7 @@ impl Exchange {
                             }
                             market.buy_orders.append(&mut temp);
                         },
-                        "sell" => {
+                        "SELL" => {
                             // Move all the orders except the one we're cancelling to a new heap,
                             // then move it back to the sell heap.
                             let new_size = market.sell_orders.len() - 1;
@@ -324,6 +324,12 @@ impl Exchange {
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
                     }
+
+                    // TODO: Do we want to update market stats? total_cancelled maybe?
+                    let mut to_remove = Vec::new();
+                    to_remove.push(order_to_cancel.order_id);
+                    database::delete_pending_orders(&to_remove, conn, "CANCELLED");
+
 
                     return Ok(());
 

@@ -189,7 +189,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::CancelReq(order_to_cancel, password) => {
             match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
-                    match exchange.cancel_order(&order_to_cancel, users) {
+                    match exchange.cancel_order(&order_to_cancel, users, conn) {
                         Ok(_) => println!("Order successfully cancelled."),
                         Err(e) => eprintln!("{}", e)
                     }

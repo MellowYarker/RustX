@@ -183,6 +183,33 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
     return Some(trades);
 }
 
+/* TODO: Untested, not sure even how to test this.
+ * Returns Some(action) if the user owns this pending order, else None. */
+pub fn match_pending_order(user_id: i32, order_id: i32, conn: &mut Client) -> Option<String> {
+    let result = conn.query("\
+SELECT action
+FROM Orders o, PendingOrders p
+WHERE p.order_id = $1
+  AND o.order_id = p.order_id
+  AND o.user_id  = $2;", &[&order_id, &user_id]);
+
+    match result {
+        Ok(rows) => {
+            if rows.len() == 1 {
+                for row in rows {
+                    let action: &str = row.get(0);
+                    return Some(action.to_string().clone());
+                }
+            }
+        },
+        Err(e) => {
+            eprintln!("{:?}", e);
+            panic!("Match pending order query failed!");
+        }
+    }
+    return None;
+}
+
 /* Writes to the database.
  * This function inserts an order to the Orders table,
  * and will insert it to the PendingOrders table if the
@@ -307,13 +334,21 @@ pub fn update_filled_counts(query_string: &String, conn: &mut Client) {
 /* Deletes order's from PendingOrders table.
  * Will set order status to COMPLETE and set filled to quantity.
  * */
-pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client) {
+pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
     // TODO: We can run this all in parallel!
     let mut delete_query_string = String::new();
     let mut update_query_string = String::new();
+
     for order in order_ids.iter() {
         delete_query_string.push_str(format!["DELETE FROM PendingOrders WHERE order_id={}; ", order].as_str());
-        update_query_string.push_str(format!["UPDATE Orders SET status='COMPLETE', filled=quantity WHERE order_id={}; ", order].as_str());
+        // Determine if order completed or cancelled
+        let mut filled: &str;
+        if let "COMPLETE" = set_status {
+            filled = "quantity";
+        } else {
+            filled = "filled";
+        }
+        update_query_string.push_str(format!["UPDATE Orders SET status='{}', filled={} WHERE order_id={}; ", set_status, filled, order].as_str());
     }
     if let Err(e) = conn.query(delete_query_string.as_str(), &[]) {
         eprintln!("{:?}", e);

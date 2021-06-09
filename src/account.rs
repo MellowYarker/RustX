@@ -44,8 +44,7 @@ impl UserAccount {
         }
     }
 
-    /* Used when reading values from database.
-     * */
+    /* Used when reading values from database.*/
     pub fn direct(id: i32, username: &str, password: &str) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
         // let trades: Vec<Trade> = Vec::new();
@@ -65,6 +64,7 @@ impl UserAccount {
     }
 
     /* TODO: Order inserts by time executed!
+     * TODO: Move sql stuff to database.rs
      * Get this accounts pending orders from the database.
      **/
     fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
@@ -101,11 +101,10 @@ ORDER BY o.order_ID;";
     }
 
     /* TODO: Order inserts by time executed!
+     * TODO: Move sql stuff to database.rs
      * Get this accounts executed trades from the database.
      **/
     fn fetch_account_executed_trades(&self, executed_trades: &mut Vec<Trade>, conn: &mut Client) {
-        // let mut executed_trades: Vec<Trade> = Vec::new();
-        // self.executed_trades.clear();
         // First, lets get trades where we had our order filled.
         let query_string = "\
 SELECT * FROM ExecutedTrades e
@@ -172,6 +171,9 @@ ORDER BY e.filled_OID;";
     }
 
     /*
+     * Returns true if this order will not fill any pending orders placed by
+     * this user. Otherwise, returns false.
+     *
      * Consider the following scenario:
      *  -   user places buy order for 10 shares of X at $10/share.
      *          - the order remains on the market and is not filled.
@@ -179,8 +181,6 @@ ORDER BY e.filled_OID;";
      *  -   the new order will fill their old order, which is probably undesirable,
      *      or even illegal.
      *
-     *  Returns true if this order will not fill any pending orders placed by
-     *  this user. Otherwise, returns false.
      **/
     pub fn validate_order(&self, order: &Order) -> bool {
         match self.pending_orders.get(&order.symbol) {
@@ -201,7 +201,7 @@ ORDER BY e.filled_OID;";
         return true;
     }
 
-    fn check_order_cache(&self, symbol: &String, id: i32) -> Option<String> {
+    fn check_pending_order_cache(&self, symbol: &String, id: i32) -> Option<String> {
         if let Some(market) = self.pending_orders.get(symbol) {
             if let Some(order) = market.get(&id) {
                 return Some(order.action.clone()); // buy or sell
@@ -211,25 +211,22 @@ ORDER BY e.filled_OID;";
         return None;
     }
 
-    /* Check if the user with the given username actually placed this order. */
-    pub fn user_placed_order(&self, symbol: &String, id: i32) -> Option<String> {
-        match self.check_order_cache(symbol, id) {
+    /* Check if the user with the given username owns a pending order with this id.
+     * If they do, return the order's action.
+     * */
+    pub fn user_placed_pending_order(&self, symbol: &String, id: i32, conn: &mut Client) -> Option<String> {
+        match self.check_pending_order_cache(symbol, id) {
             Some(action) => return Some(action),
+            /* TODO:
+            * Recurrent issue: If it's not in the cache, but it IS in the db,
+            *                  do we want to move it into the cache? Means we need
+            *                  a mutable ref to self. Is this situation even possible?
+            */
             None => {
-                // Update cache and try again!
-                // self.fetch_account_pending_orders(
+                // Doesn't update cache.
+                return database::match_pending_order(self.id.unwrap(), id, conn);
             }
         }
-        /* TODO:
-        // Check the in program cache, if not there, check db?
-        if let Some(market) = self.pending_orders.get(symbol) {
-            if let Some(order) = market.get(&id) {
-                return Some(order.action.clone()); // buy or sell
-            }
-        }
-        */
-
-        return None;
     }
 
     /* Removes a pending order from an account if it exists. */
@@ -629,7 +626,7 @@ impl Users {
         }
         // Remove all the completed orders from the database's pending table.
         // Sets Orders to complete, and sets filled = quantity.
-        database::delete_pending_orders(&entries_to_remove, conn);
+        database::delete_pending_orders(&entries_to_remove, conn, "COMPLETE");
     }
 
     /* Given a vector of Trades, update all the accounts
