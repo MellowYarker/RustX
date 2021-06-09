@@ -14,7 +14,7 @@ CREATE TABLE Orders (
     filled          int,
     price           float8,
     user_ID         int,
-    status          varchar(8) NOT NULL,
+    status          varchar(9) NOT NULL,
     time_placed     date,
     time_updated    date,
     PRIMARY KEY(order_ID),
