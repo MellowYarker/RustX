@@ -47,6 +47,40 @@ fn direct_insert_to_market(potential_market: Option<&mut Market>, order: &Order)
     return None;
 }
 
+/* Default initializes all entries in hashmap to false,
+ * then sets the entries that have trades to true.
+ **/
+pub fn populate_has_trades(exchange: &mut Exchange, conn: &mut Client) {
+    // 1. Read all markets in our exchange.
+    let result = conn.query("SELECT symbol FROM Markets;", &[]);
+    match result {
+        Ok(rows) => {
+            for row in rows {
+                let symbol: &str = row.get(0);
+                exchange.has_trades.insert(symbol.to_string().clone(), false);
+            }
+        },
+        Err(e) => {
+            eprintln!("{:?}", e);
+            panic!("Query to read all market symbols failed!");
+        }
+    }
+    // 2. Set markets with trades to true.
+    let result = conn.query("SELECT DISTINCT symbol FROM ExecutedTrades;", &[]);
+    match result {
+        Ok(rows) => {
+            for row in rows {
+                let symbol: &str = row.get(0);
+                exchange.has_trades.insert(symbol.to_string().clone(), true);
+            }
+        },
+        Err(e) => {
+            eprintln!("{:?}", e);
+            panic!("Query to read all markets with trades failed!");
+        }
+    }
+}
+
 // TODO
 /* Get the relevant pending orders from all
  * the markets, and insert them into the exchange.
@@ -116,6 +150,37 @@ pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) 
         let total_orders: i32 = row.get(0);
         exchange.total_orders = total_orders;
     }
+}
+
+/* TODO: Accept time periods!
+ * Read past trades for the requested security from the database.
+ * Returns Some(Vec<Trade>) if there are trades,
+ * otherwise, returns None.
+ **/
+pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
+    let mut trades: Vec<Trade> = Vec::new();
+    for row in conn.query("SELECT * FROM ExecutedTrades WHERE symbol=$1", &[&symbol.as_str()]).expect("Read Trades query (History) failed!") {
+        let symbol:     &str = row.get(0);
+        let action:     &str = row.get(1);
+        let price:      f64  = row.get(2);
+        let filled_oid: i32  = row.get(3);
+        let filled_uid: i32  = row.get(4);
+        let filler_oid: i32  = row.get(5);
+        let filler_uid: i32  = row.get(6);
+        let exchanged:  i32  = row.get(7);
+        // let exec_time: &str = row.get(0);
+        trades.push(Trade::direct(symbol,
+                                  action,
+                                  price,
+                                  filled_oid,
+                                  filled_uid,
+                                  filler_oid,
+                                  filler_uid,
+                                  exchanged
+                                  )
+                    );
+    }
+    return Some(trades);
 }
 
 /* Writes to the database.

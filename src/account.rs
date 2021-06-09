@@ -219,7 +219,7 @@ ORDER BY e.filled_OID;";
                 // self.fetch_account_pending_orders(
             }
         }
-        /*
+        /* TODO:
         // Check the in program cache, if not there, check db?
         if let Some(market) = self.pending_orders.get(symbol) {
             if let Some(order) = market.get(&id) {
@@ -607,7 +607,7 @@ impl Users {
                         order.filled += trade.exchanged; // order partially filled
                         // Extend our query string
                         update_filled_query_string
-                            .push_str(format!["UPDATE Orders set filled=filled+{} WHERE order_id={}; ", order.filled, order.order_id].as_str());
+                            .push_str(format!["UPDATE Orders set filled={} WHERE order_id={}; ", order.filled, order.order_id].as_str());
                     }
                     account.executed_trades.push(update_trade);
                 },
