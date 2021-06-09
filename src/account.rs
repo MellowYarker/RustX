@@ -28,19 +28,19 @@ pub struct UserAccount {
      *      2. Fast access to orders in each market (see validate_order function).
     **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
-    pub executed_trades: Vec<Trade>                             // Trades that have occurred.
+    // pub executed_trades: Vec<Trade>                             // Trades that have occurred.
 }
 
 impl UserAccount {
     pub fn from(username: &String, password: &String) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        let trades: Vec<Trade> = Vec::new();
+        // let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.clone(),
             password: password.clone(),
             id: None, // We set this later
             pending_orders: placed,
-            executed_trades: trades,
+            // executed_trades: trades,
         }
     }
 
@@ -48,13 +48,13 @@ impl UserAccount {
      * */
     pub fn direct(id: i32, username: &str, password: &str) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        let trades: Vec<Trade> = Vec::new();
+        // let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.to_string().clone(),
             password: password.to_string().clone(),
             id: Some(id),
             pending_orders: placed,
-            executed_trades: trades,
+            // executed_trades: trades,
         }
     }
 
@@ -103,8 +103,9 @@ ORDER BY o.order_ID;";
     /* TODO: Order inserts by time executed!
      * Get this accounts executed trades from the database.
      **/
-    fn fetch_account_executed_trades(&mut self, conn: &mut Client) {
-        self.executed_trades.clear();
+    fn fetch_account_executed_trades(&self, executed_trades: &mut Vec<Trade>, conn: &mut Client) {
+        // let mut executed_trades: Vec<Trade> = Vec::new();
+        // self.executed_trades.clear();
         // First, lets get trades where we had our order filled.
         let query_string = "\
 SELECT * FROM ExecutedTrades e
@@ -130,7 +131,7 @@ ORDER BY e.filled_OID;";
                                       filler_oid,
                                       filler_uid,
                                       exchanged);
-            self.executed_trades.push(trade);
+            executed_trades.push(trade);
         }
 
         // Next, lets get trades where we were the filler.
@@ -166,7 +167,7 @@ ORDER BY e.filled_OID;";
                                       filler_oid,
                                       filler_uid,
                                       exchanged);
-            self.executed_trades.push(trade);
+            executed_trades.push(trade);
         }
     }
 
@@ -538,7 +539,8 @@ impl Users {
                     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
                 account.fetch_account_pending_orders(&mut client);
-                account.fetch_account_executed_trades(&mut client);
+                let mut executed_trades: Vec<Trade> = Vec::new();
+                account.fetch_account_executed_trades(&mut executed_trades, &mut client);
 
                 println!("\n\tOrders Awaiting Execution");
                 for (_, market) in account.pending_orders.iter() {
@@ -547,7 +549,8 @@ impl Users {
                     }
                 }
                 println!("\n\tExecuted Trades");
-                for order in account.executed_trades.iter() {
+                // for order in account.executed_trades.iter() {
+                for order in executed_trades.iter() {
                     println!("\t\t{:?}", order);
                 }
                 println!("\n");
@@ -609,10 +612,12 @@ impl Users {
                         update_filled_query_string
                             .push_str(format!["UPDATE Orders set filled={} WHERE order_id={}; ", order.filled, order.order_id].as_str());
                     }
-                    account.executed_trades.push(update_trade);
+                    // account.executed_trades.push(update_trade);
                 },
-                None => account.executed_trades.push(update_trade)
+                // None => account.executed_trades.push(update_trade)
+                None => ()
             }
+            // account.executed_trades.push(update_trade);
         }
 
         // For each trade, update `filled` in Orders table.
