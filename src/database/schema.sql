@@ -8,7 +8,7 @@ CREATE TABLE Account (
 
 CREATE TABLE Orders (
     order_ID        int,
-    symbol          varchar(4) NOT NULL,
+    symbol          varchar(10) NOT NULL,
     action          varchar(4) NOT NULL,
     quantity        int,
     filled          int,
@@ -31,7 +31,7 @@ CREATE TABLE PendingOrders (
 );
 
 CREATE TABLE ExecutedTrades (
-    symbol          varchar(4) NOT NULL,
+    symbol          varchar(10) NOT NULL,
     action          varchar(4) NOT NULL,
     price           float8,
     filled_OID      int,
@@ -54,7 +54,7 @@ CREATE TABLE ExecutedTrades (
 );
 
 CREATE TABLE Markets (
-    symbol          varchar(4) NOT NULL,
+    symbol          varchar(10) NOT NULL,
     name            varchar(80) NOT NULL,
     total_buys      int,
     total_sells     int,
