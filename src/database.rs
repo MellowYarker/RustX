@@ -342,7 +342,7 @@ pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status
     for order in order_ids.iter() {
         delete_query_string.push_str(format!["DELETE FROM PendingOrders WHERE order_id={}; ", order].as_str());
         // Determine if order completed or cancelled
-        let mut filled: &str;
+        let filled: &str;
         if let "COMPLETE" = set_status {
             filled = "quantity";
         } else {

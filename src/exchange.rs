@@ -86,7 +86,7 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(mut trades) = executed_trades {
+        if let Some(trades) = executed_trades {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
             // Updates in-mem data
