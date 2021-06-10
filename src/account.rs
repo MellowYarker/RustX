@@ -28,7 +28,6 @@ pub struct UserAccount {
      *      2. Fast access to orders in each market (see validate_order function).
     **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
-    // pub executed_trades: Vec<Trade>                             // Trades that have occurred.
 }
 
 impl UserAccount {
@@ -40,7 +39,6 @@ impl UserAccount {
             password: password.clone(),
             id: None, // We set this later
             pending_orders: placed,
-            // executed_trades: trades,
         }
     }
 
@@ -53,7 +51,6 @@ impl UserAccount {
             password: password.to_string().clone(),
             id: Some(id),
             pending_orders: placed,
-            // executed_trades: trades,
         }
     }
 
@@ -444,83 +441,79 @@ impl Users {
         // TODO: we call get twice if it was a cache hit.
         //       This is clearly stupid, but Rust's borrow checker is mad at me again,
         //       so I will figure this out later.
+        //
+        //  I believe this can be fixed by storing + accessing only 1 hashmap for a cache.
+        //  Rather than taking &mut self, we can just take &mut HashMap.
+        //  This will be fixed once I switch to userIDs instead of usernames.
         return Ok(self.users.get(username).unwrap());
     }
 
-    /* Returns a reference to a user account if
-     * user has been authenticated.
+    /* Returns a reference to a user account if the user has been authenticated.
+     * Panic's if the account isn't found, since the user is not in the cache.
+     *
+     * Note: We don't do any database lookups here. The authentication function
+     * is always called right before, and that cache's the user!
      */
     pub fn get<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get(username) {
                 // Cached
-                Some(_) => (),//return Ok(account),
+                Some(account) => return Ok(account),
                 // In database
-                None => {
-                    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
-                    let result = client.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("Failed to get user from database.");
-
-                    let row = &result[0];
-                    let recv_id: i32 = row.get(0);
-                    let recv_username: &str = row.get(1);
-                    let recv_password: &str = row.get(2);
-                    // TODO: Do we want to cache the user?
-                    let account = UserAccount::direct(recv_id, recv_username, recv_password);
-                    self.cache_user(account);
-                }
+                None => panic!("\
+Attempted to get user that was not already cached.
+Be sure to call authenticate() before trying to get a reference to a user!")
             }
-            // TODO: we call get twice if it was a cache hit.
-            //       This is clearly stupid, but Rust's borrow checker is mad at me again,
-            //       so I will figure this out later.
-            return Ok(self.users.get(username).unwrap());
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
         return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
-    /* TODO: Return a Result<T, E> instead of Option so we
-     *       can specify any errors!
-     * Returns a mutable reference to a user account if:
-     *  - the account exists and
-     *  - the user has been authenticated
+    /* Returns a reference to a user account if the user has been authenticated.
+     * Panic's if the account isn't found, since the user is not in the cache.
+     *
+     * Note: We don't do any database lookups here. The authentication function
+     * is always called right before, and that cache's the user!
      */
     pub fn get_mut<'a>(&mut self, username: &'a String, authenticated: bool) -> Result<&mut UserAccount, AuthError<'a>> {
         if authenticated {
             match self.users.get_mut(username) {
-                // Cached
-                Some(_) => (),//return Ok(account),
-                // In database
-                None => {
-                    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls).expect("Failed to connect to Database. Please ensure it is up and running.");
-                    let result = client.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("Failed to get user from database.");
-
-                    let row = &result[0];
-                    let recv_id: i32 = row.get(0);
-                    let recv_username: &str = row.get(1);
-                    let recv_password: &str = row.get(2);
-                    // TODO: Do we want to cache the user?
-                    let account = UserAccount::direct(recv_id, recv_username, recv_password);
-                    self.cache_user(account);
-                }
+                Some(account) => return Ok(account),
+                None => panic!("\
+Attempted to get user that was not already cached.
+Be sure to call authenticate() before trying to get a reference to a user!")
             }
-            // TODO: we call get twice if it was a cache hit.
-            //       This is clearly stupid, but Rust's borrow checker is mad at me again,
-            //       so I will figure this out later.
-            return Ok(self.users.get_mut(username).unwrap());
         }
         let err_msg = format!["Must authenticate before accessing account belonging to: ({})", username];
         return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
     /* For internal use only.
-     * Returns a mutable reference to a user account if:
-     *  - the account exists
-     * TODO: Is it stupid to have an entire function for this?
-     *       The benefit is we indicate only internal functions access
-     *       the `users` property.
+     *
+     * If the account is in the cache (active user), we return a mutable ref to the user.
+     * If the account is in the database, we construct a user, get the pending orders,
+     * then return the UserAccount to the calling function.
+     *
+     * This means we do not update the cache!
      */
-    fn _get_mut(&mut self, username: &String) -> Option<&mut UserAccount> {
-        self.users.get_mut(username)
+    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
+        match self.users.get_mut(username) {
+            Some(account) => return (Some(account), None),
+            None => {
+                // Get from database and construct account
+                let result = conn.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("User not found in database! This is an internal error, it should not occur.");
+                let row = &result[0];
+                let recv_id: i32 = row.get(0);
+                let recv_username: &str = row.get(1);
+                let recv_password: &str = row.get(2);
+
+                let mut account = UserAccount::direct(recv_id, recv_username, recv_password);
+
+                // Fill this account with the pending orders
+                account.fetch_account_pending_orders(conn);
+                return (None, Some(account));
+            }
+        }
     }
 
     /* Prints the account information of this user if:
@@ -535,6 +528,8 @@ impl Users {
                 let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
                     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
+                // TODO: The cached pending orders are probably up to date?
+                //       Don't think we need to call this.
                 account.fetch_account_pending_orders(&mut client);
                 let mut executed_trades: Vec<Trade> = Vec::new();
                 account.fetch_account_executed_trades(&mut executed_trades, &mut client);
@@ -546,7 +541,6 @@ impl Users {
                     }
                 }
                 println!("\n\tExecuted Trades");
-                // for order in account.executed_trades.iter() {
                 for order in executed_trades.iter() {
                     println!("\t\t{:?}", order);
                 }
@@ -556,7 +550,7 @@ impl Users {
         }
     }
 
-    /* Update this users pending_orders and executed_trades.
+    /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
     fn update_single_user(&mut self, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
@@ -567,7 +561,23 @@ impl Users {
         //      2. If ID not found, check the database
         //      3. Update the id_map cache (LRU)
         let username: String = self.id_map.get(&id).expect("update_single_user Error couldn't get username from userID").clone();
-        let account = self._get_mut(&username).expect("update_single_user ERROR: couldn't find user!");
+
+        // If _get_mut gives us a database entry, place_holder will hold it
+        // and account will refer to place_holder.
+        let mut place_holder: UserAccount;
+        let account: &mut UserAccount;
+
+        // Gives either a mutable reference to cache,
+        // or constructs account from db (no cache update).
+        let result = self._get_mut(&username, conn);
+        if let Some(acc) = result.0 {
+            // Got reference to cache
+            account = acc;
+        } else {
+            // Got user from database
+            place_holder = result.1.unwrap();
+            account = &mut place_holder;
+        }
         // Since we can't remove entries while iterating, store the key's here.
         // We know we won't need more than trade.len() entries.
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());
@@ -576,7 +586,7 @@ impl Users {
         const BUY: &str = "BUY";
         const SELL: &str = "SELL";
 
-        let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
+        let market = account.pending_orders.get_mut(&trades[0].symbol).expect("Pending Order is missing from account!");
 
         // Query strings that we will extend.
         let mut update_filled_query_string = String::new();
@@ -609,12 +619,9 @@ impl Users {
                         update_filled_query_string
                             .push_str(format!["UPDATE Orders set filled={} WHERE order_id={}; ", order.filled, order.order_id].as_str());
                     }
-                    // account.executed_trades.push(update_trade);
                 },
-                // None => account.executed_trades.push(update_trade)
                 None => ()
             }
-            // account.executed_trades.push(update_trade);
         }
 
         // For each trade, update `filled` in Orders table.
