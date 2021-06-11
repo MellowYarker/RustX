@@ -586,7 +586,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         const BUY: &str = "BUY";
         const SELL: &str = "SELL";
 
-        let market = account.pending_orders.get_mut(&trades[0].symbol).expect("Pending Order is missing from account!");
+        let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
 
         // Query strings that we will extend.
         let mut update_filled_query_string = String::new();
