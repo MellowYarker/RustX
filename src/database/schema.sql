@@ -55,7 +55,7 @@ CREATE TABLE ExecutedTrades (
 
 CREATE TABLE Markets (
     symbol          varchar(10) NOT NULL,
-    name            varchar(200) NOT NULL,
+    name            varchar(300) NOT NULL,
     total_buys      int,
     total_sells     int,
     filled_buys     int,
