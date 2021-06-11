@@ -131,5 +131,6 @@ pub enum Request {
     CancelReq(CancelOrder, String), // string is password
     InfoReq(InfoRequest),
     SimReq(Simulation),
-    UserReq(UserAccount, String)    // Account followed by action
+    UserReq(UserAccount, String), // Account followed by action
+    UpgradeDbReq(String, String), // username, password. Only admin can call this
 }

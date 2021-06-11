@@ -1,11 +1,12 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
 pub use crate::print_instructions;
 use postgres::Client;
+use crate::database;
 
 use crate::account::{UserAccount, Users};
 
 // IO stuff
-use std::io::BufReader;
+use std::io::{self, BufReader};
 use std::env;
 use std::fs::File;
 
@@ -50,6 +51,7 @@ fn malformed_req(req: &str, req_type: &str) {
        "cancel"     => eprintln!("Hint - format should be: {} symbol order_id username password", req),
        "info"       => eprintln!("Hint - format should be: {} symbol", req),
        "sim"        => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
+       "upgrade_db" => eprintln!("Hint - format should be: {} file_path username password", req),
        _            => ()
     }
 }
@@ -130,6 +132,17 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 return Ok(Request::InfoReq(req));
             } else {
                 malformed_req(&words[0], "info");
+                return Err(());
+            }
+        },
+        // Upgrade the database, only the admin can do this.
+        "upgrade_db" => {
+            if let 3 = words.len() {
+                let username  = words[1].to_string();
+                let password  = words[2].to_string();
+                return Ok(Request::UpgradeDbReq(username, password));
+            } else {
+                malformed_req(&words[0], &words[0]);
                 return Err(());
             }
         },
@@ -222,7 +235,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     if exchange.statistics.contains_key(&req.symbol) {
                         exchange.show_market(&req.symbol);
                     } else {
-                        println!("Sorry, we have no market information on ${}", req.symbol);
+                        println!("${} is not a market!", req.symbol);
                     }
                 },
                 // Show the past orders of this market.
@@ -243,11 +256,37 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 }
             }
         },
+        Request::UpgradeDbReq(username, password) => {
+            // First, lets authenticate to make sure we're the admin.
+            if username.as_str() == "admin" {
+                match users.authenticate(&username, &password, conn) {
+                    Ok(_) => {
+                        println!("Please enter the file path to the configuration:");
+                        let mut file_path = String::new();
+                        io::stdin()
+                            .read_line(&mut file_path)
+                                .expect("Failed to read line");
+                        file_path = file_path.split_whitespace().next().expect("Please be sure to enter text!").to_string();
+                        match File::open(file_path) {
+                            Ok(f) => {
+                                database::upgrade_db(BufReader::new(f), conn);
+                            },
+                            Err(e) => {
+                                eprintln!("{}", e);
+                            }
+                        };
+                    },
+                    Err(e) => Users::print_auth_error(e)
+                }
+            } else {
+                eprintln!("Only the administrator can upgrade the database!");
+            }
+        },
         Request::SimReq(req) => {
             match &req.action[..] {
                 "simulate" => {
                     println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
-                    &exchange.simulate_market(&req, users);
+                    &exchange.simulate_market(&req, users, conn);
                 },
                 _ => {
                     eprintln!("I don't know how to handle this Simulation request.");
@@ -257,7 +296,6 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::UserReq(account, action) => {
             match &action[..] {
                 "create" => {
-                   // match users.new_account(account) {
                    match users.new_account(account, conn) {
                        Some(id) => println!("Successfully created new account with id {}.", id),
                        None => println!("Sorry, that username is already taken!")

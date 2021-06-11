@@ -138,7 +138,13 @@ impl Exchange {
 
     // Print a market
     pub fn show_market(&self, symbol: &String) {
-        let market = self.live_orders.get(symbol).expect("NO VALUE");
+        let market = match self.live_orders.get(symbol) {
+            Some(market) => market,
+            None => {
+                println!("${} has no pending orders!", symbol);
+                return;
+            }
+        };
         let num_orders_to_view = 10;
 
         println!("\nMarket: ${}", symbol);
@@ -274,7 +280,8 @@ impl Exchange {
                 new_account_market.insert(order.order_id, order.clone());
 
                 // Since this is the first order, initialize the stats for this security.
-                self.init_stats(&order);
+                new_price = self.update_state(&order, users, None);
+                // self.init_stats(&order);
             }
         }
 
@@ -352,11 +359,10 @@ impl Exchange {
      *      - Maybe simulate individual markets? (This was old behaviour)
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
-    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users) {
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, conn: &mut Client) {
         eprintln!("SIMULATION UNDER CONSTRUCTION DURING DATABASE MIGRATION");
-    }
-    /*
 
+        /*
         let buy = String::from("BUY");
         let sell = String::from("SELL");
 
@@ -384,7 +390,7 @@ impl Exchange {
         let mut username: &String;
 
         for name in usernames.iter() {
-            users.new_account(UserAccount::from(name, &"password".to_string()));
+            users.new_account(UserAccount::from(name, &"password".to_string()), conn);
         }
 
         // Simulation loop
@@ -417,7 +423,7 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
+            if let Ok(account) =  users.authenticate(username, &"password".to_string(), conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, account.id);
                 if account.validate_order(&order) {
@@ -428,6 +434,6 @@ impl Exchange {
 
         // If you want prints of each users account, uncomment this.
         // users.print_all();
+    */
     }
-*/
 }

@@ -2,6 +2,9 @@ use postgres::Client;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 
+// IO stuff
+use std::io::prelude::*;
+
 use crate::exchange::{Exchange, Market, Order, SecStat, Trade};
 
 // Directly inserts this order to the market
@@ -147,9 +150,55 @@ pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) 
     for row in conn.query("SELECT total_orders FROM ExchangeStats", &[])
         .expect("Something went wrong in the query.") {
 
-        let total_orders: i32 = row.get(0);
-        exchange.total_orders = total_orders;
+        let total_orders: Option<i32> = row.get(0);
+        match total_orders {
+            Some(count) => exchange.total_orders = count,
+            None => exchange.total_orders = 0
+        }
     }
+}
+
+/* Upgrade the database according to the config file.
+ * TODO:
+ *      When we fulfill a request, replace the first word with #
+ *      as it can signify a comment/completed task.
+ * */
+pub fn upgrade_db<R>(reader: std::io::BufReader<R>, conn: &mut Client)
+where
+    R: std::io::Read
+{
+    let mut query_string = String::from("\
+INSERT INTO Markets
+(symbol, name, total_buys, total_sells, filled_buys, filled_sells, latest_price)
+Values
+");
+    for line in reader.lines() {
+        match line {
+            Ok(line) => {
+                let mut components = line.split(',');
+                let action = components.next().unwrap();
+                let symbol = components.next().unwrap();
+                let company_name = str::replace(components.next().unwrap(), "'", "''"); // sanitize input
+
+                if action == "add" {
+                    query_string.push_str(format!["('{}', '{}', 0, 0, 0, 0, NULL),\n", symbol, company_name].as_str());
+                }
+            },
+            Err(e) => eprintln!("{}", e)
+        }
+    }
+    query_string.pop(); // Removes newline
+    query_string.pop(); // Removes last comma
+
+    query_string.push(';');
+
+    if let Err(e) = conn.query(query_string.as_str(), &[]) {
+        eprintln!("{:?}", e);
+        panic!("Query to upgrade database failed!");
+    }
+
+    println!("Upgrade complete!");
+
 }
 
 /* TODO: Accept time periods!
@@ -253,7 +302,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
     }
 
     // Update the exchange total orders
-    let query_string = "UPDATE ExchangeStats set total_orders=$1;";
+    let query_string: &str;
+    if order.order_id == 1 {
+        query_string = "INSERT INTO ExchangeStats VALUES ($1);";
+    } else {
+        query_string = "UPDATE ExchangeStats set total_orders=$1;";
+    }
     if let Err(e) = conn.query(query_string, &[&order.order_id]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the exchange total orders update query!");
@@ -350,6 +404,7 @@ pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status
         }
         update_query_string.push_str(format!["UPDATE Orders SET status='{}', filled={} WHERE order_id={}; ", set_status, filled, order].as_str());
     }
+
     if let Err(e) = conn.query(delete_query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
         eprintln!("\n{}", delete_query_string);
