@@ -117,6 +117,25 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
     }
 }
 
+/* Gets all markets and puts them in pending orders, only used when we run simulations! */
+pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mut Client) {
+    // We order by symbol (market) and action, since this will probably increase cache hits.
+    // This is because we populate the buys, then the sells, then move to the next market. High
+    // spacial locality.
+    let mut i = 0;
+    let limit = symbol_vec.capacity();
+    for row in conn.query("SELECT symbol FROM Markets;", &[])
+        .expect("Something went wrong in the query.") {
+
+        let symbol: &str = row.get(0);
+        symbol_vec.push(symbol.to_string());
+        i += 1;
+        if i == limit {
+            return;
+        }
+    }
+}
+
 // TODO: Company Name??
 /* Populate the statistics for each market
  *      - Future note: If we distribute markets across
@@ -141,7 +160,7 @@ pub fn populate_market_statistics(exchange: &mut Exchange, conn: &mut Client) {
 }
 
 // TODO
-/* Populate the statistics the exchange
+/* Populate the statistics of the exchange
  *      - Future note: If we distribute markets across
  *        machines, it might be a good idea to provide
  *        a list of markets to read from.
@@ -226,7 +245,7 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
                                   filler_oid,
                                   filler_uid,
                                   exchanged
-                                  )
+                                 )
                     );
     }
     return Some(trades);
@@ -265,37 +284,39 @@ WHERE p.order_id = $1
  * order is not COMPLETE.
  **/
 pub fn write_insert_order(order: &Order, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     let query_string = "\
 INSERT INTO Orders
 (order_ID, symbol, action, quantity, filled, price, user_ID, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
 
-    let status: String;
+    let status: &str;
     let mut add_to_pending = false;
 
     if order.quantity == order.filled {
-        status = String::from("COMPLETE");
+        status = "COMPLETE";
     } else {
-        status = String::from("PENDING");
+        status = "PENDING";
         add_to_pending = true;
     }
-    if let Err(e) = conn.query(query_string, &[ &order.order_id,
+    if let Err(e) = transaction.execute(query_string, &[ &order.order_id,
                                                 &order.symbol,
                                                 &order.action,
                                                 &order.quantity,
                                                 &order.filled,
                                                 &order.price,
                                                 &order.user_id,
-                                                &status,
+                                                &status.to_string(),
                                                 // None, TODO time_placed
                                                 // None  TODO time_updated
     ]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Order Insert query!");
     };
+
     if add_to_pending {
         let query_string = "INSERT INTO PendingOrders VALUES ($1);";
-        if let Err(e) = conn.query(query_string, &[&order.order_id]) {
+        if let Err(e) = transaction.execute(query_string, &[&order.order_id]) {
             eprintln!("{:?}", e);
             panic!("Something went wrong with the PendingOrder Insert query!");
         };
@@ -307,11 +328,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
         query_string = "INSERT INTO ExchangeStats VALUES ($1);";
     } else {
         query_string = "UPDATE ExchangeStats set total_orders=$1;";
-    }
-    if let Err(e) = conn.query(query_string, &[&order.order_id]) {
+    };
+
+    if let Err(e) = transaction.execute(query_string, &[&order.order_id]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the exchange total orders update query!");
-    }
+    };
 
     let query_string: String;
     match &order.action[..] {
@@ -320,10 +342,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
         _ => panic!("We should never get here.")
     }
 
-    if let Err(e) = conn.query(query_string.as_str(), &[&order.symbol]) {
+    if let Err(e) = transaction.execute(query_string.as_str(), &[&order.symbol]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Market total count update query!");
-    }
+    };
+
+    if let Err(e) = transaction.commit() {
+        eprintln!("{:?}", e);
+        panic!("The transaction that updates several tables when we get a new order failed!");
+    };
 }
 
 /* Writes to the database.
@@ -353,23 +380,28 @@ WHERE Markets.symbol = $6;";
  */
 pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
 
-    let mut query_string = String::new();
-    for trade in trades.iter() {
-        query_string.push_str(format!["\
+    let mut query_string = String::from("\
 INSERT INTO ExecutedTrades
 (symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged)
-VALUES ('{}', '{}', {}, {}, {}, {}, {}, {}); ", trade.symbol,
-                                                trade.action,
-                                                trade.price,
-                                                trade.filled_oid,
-                                                trade.filled_uid,
-                                                trade.filler_oid,
-                                                trade.filler_uid,
-                                                trade.exchanged,
+VALUES \n");
+    for trade in trades.iter() {
+        query_string.push_str(format!["('{}', '{}', {}, {}, {}, {}, {}, {}),\n",
+                                    trade.symbol,
+                                    trade.action,
+                                    trade.price,
+                                    trade.filled_oid,
+                                    trade.filled_uid,
+                                    trade.filler_oid,
+                                    trade.filler_uid,
+                                    trade.exchanged,
                                     ].as_str());
     }
+    query_string.pop();
+    query_string.pop();
+    query_string.push(';');
     if let Err(e) = conn.query(query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
+        eprintln!("{}", query_string);
         panic!("Insert Trades query failed!");
     }
 
@@ -390,29 +422,43 @@ pub fn update_filled_counts(query_string: &String, conn: &mut Client) {
  * */
 pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
     // TODO: We can run this all in parallel!
-    let mut delete_query_string = String::new();
-    let mut update_query_string = String::new();
+    // Determine if order completed or cancelled
+    let filled: &str;
+    if let "COMPLETE" = set_status {
+        filled = "quantity";
+    } else {
+        filled = "filled";
+    }
+    let mut delete_query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN (");
+    let mut update_query_string = format!["UPDATE Orders SET status='{}', filled={} WHERE order_id IN (", set_status, filled];
 
     for order in order_ids.iter() {
-        delete_query_string.push_str(format!["DELETE FROM PendingOrders WHERE order_id={}; ", order].as_str());
-        // Determine if order completed or cancelled
-        let filled: &str;
-        if let "COMPLETE" = set_status {
-            filled = "quantity";
-        } else {
-            filled = "filled";
-        }
-        update_query_string.push_str(format!["UPDATE Orders SET status='{}', filled={} WHERE order_id={}; ", set_status, filled, order].as_str());
+        delete_query_string.push_str(format!["{}, ", order].as_str());
+        update_query_string.push_str(format!["{}, ", order].as_str());
     }
 
-    if let Err(e) = conn.query(delete_query_string.as_str(), &[]) {
+    // Remove last ", "
+    delete_query_string.pop();
+    delete_query_string.pop();
+    delete_query_string.push_str(");");
+
+    update_query_string.pop();
+    update_query_string.pop();
+    update_query_string.push_str(");");
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction in delete_pending_orders");
+    if let Err(e) = transaction.execute(delete_query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
-        eprintln!("\n{}", delete_query_string);
         panic!("PendingOrders Delete query failed!", );
     }
-    if let Err(e) = conn.query(update_query_string.as_str(), &[]) {
+
+    if let Err(e) = transaction.execute(update_query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
-        eprintln!("\n{}", update_query_string);
         panic!("Order Status Update query failed!", );
+    }
+
+    if let Err(e) = transaction.commit() {
+        eprintln!("{:?}", e);
+        panic!("Failed to commit transaction in delete_pending_orders");
     }
 }
