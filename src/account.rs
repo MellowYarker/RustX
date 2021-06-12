@@ -339,7 +339,7 @@ impl Users {
                 },
                 Err(e) => {
                     eprintln!("{:?}", e);
-                    eprintln!("Something went wrong with the insert!");
+                    panic!("Something went wrong with the insert!");
                 }
             }
             // TODO:
@@ -633,22 +633,21 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         }
         // Remove all the completed orders from the database's pending table.
         // Sets Orders to complete, and sets filled = quantity.
-        database::delete_pending_orders(&entries_to_remove, conn, "COMPLETE");
+        if entries_to_remove.len() > 0 {
+            database::delete_pending_orders(&entries_to_remove, conn, "COMPLETE");
+        }
     }
 
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, trades: &Vec<Trade>) {
+    pub fn update_account_orders(&mut self, trades: &Vec<Trade>, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
          *  1. Update all accounts who's orders were filled by new order.
          *  2. Update account of user who's order filled the old orders.
          **/
-
-        let mut conn = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
-            .expect("Failed to connect to Database. Please ensure it is up and running.");
 
         // Map of {users: freshly executed trades}
         let mut update_map: HashMap<i32, Vec<Trade>> = HashMap::new();
@@ -662,13 +661,13 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(*user_id, new_trades, false, &mut conn);
+            self.update_single_user(*user_id, new_trades, false, conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(trades[0].filler_uid, &trades, true, &mut conn);
+        self.update_single_user(trades[0].filler_uid, &trades, true, conn);
 
         // For each trade, insert into ExecutedTrades table.
-        database::write_insert_trades(&trades, &mut conn);
+        database::write_insert_trades(&trades, conn);
     }
 
     pub fn print_all(&self) {

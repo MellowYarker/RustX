@@ -18,7 +18,7 @@ pub use crate::account::{UserAccount, Users};
 // pub mod database;
 pub use crate::database;
 
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 // Error types for price information.
 pub enum PriceError {
@@ -61,16 +61,13 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>) -> Option<f64> {
-
-        let mut conn = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
-            .expect("Failed to connect to Database. Please ensure it is up and running.");
+    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
 
         // Write the newly placed order to the Orders table.
         // If Order isn't complete, adds to pending as well.
-        database::write_insert_order(order, &mut conn);
+        database::write_insert_order(order, conn);
 
         // Update the counters and the price
         match &order.action[..] {
@@ -92,7 +89,7 @@ impl Exchange {
             // Updates in-mem data
             stats.update_market_stats(price, &trades);
             // Updates database
-            database::write_update_market_stats(stats, &mut conn);
+            database::write_update_market_stats(stats, conn);
 
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
@@ -105,7 +102,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(&trades);
+            users.update_account_orders(&trades, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -206,7 +203,7 @@ impl Exchange {
      *
      * Returns Some(new_price) if trade occurred, else None.
     */
-    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool, conn: &mut Client) -> Option<f64> {
 
         // Mutable reference to the account associated with given username.
         let account = match users.get_mut(username, auth) {
@@ -247,7 +244,7 @@ impl Exchange {
                     current_market.insert(order.order_id, order.clone());
                 }
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, trades);
+                new_price = self.update_state(&order, users, trades, conn);
             },
             // TODO: We don't want to create markets here anymore.
             //       The correct way is to directly insert all markets
@@ -280,7 +277,7 @@ impl Exchange {
                 new_account_market.insert(order.order_id, order.clone());
 
                 // Since this is the first order, initialize the stats for this security.
-                new_price = self.update_state(&order, users, None);
+                new_price = self.update_state(&order, users, None, conn);
                 // self.init_stats(&order);
             }
         }
@@ -360,9 +357,7 @@ impl Exchange {
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
     pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, conn: &mut Client) {
-        eprintln!("SIMULATION UNDER CONSTRUCTION DURING DATABASE MIGRATION");
 
-        /*
         let buy = String::from("BUY");
         let sell = String::from("SELL");
 
@@ -379,9 +374,14 @@ impl Exchange {
         i = 0;
         let mut markets: Vec<String> = Vec::with_capacity(sim.market_count as usize);
         let mut prices: Vec<f64> = Vec::with_capacity(sim.market_count as usize);
+
+        // Fill markets
+        database::read_exchange_markets_simulations(&mut markets, conn);
+        if markets.len() != (sim.market_count as usize) {
+            panic!("{} markets is not {} markets!", markets.len(), sim.market_count);
+        }
+
         while i != sim.market_count {
-            let market_name = format!("market_{}", i);
-            markets.push(market_name.to_uppercase());
             prices.push(10.0); // The price doesn't matter for bandwidth testing
             i += 1;
         }
@@ -427,13 +427,12 @@ impl Exchange {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, account.id);
                 if account.validate_order(&order) {
-                    self.submit_order_to_market(users, order, username, true);
+                    self.submit_order_to_market(users, order, username, true, conn);
                 }
             }
         }
 
         // If you want prints of each users account, uncomment this.
         // users.print_all();
-    */
     }
 }
