@@ -247,9 +247,10 @@ impl Exchange {
                 new_price = self.update_state(&order, users, trades, conn);
             },
             // TODO: We don't want to create markets here anymore.
-            //       The correct way is to directly insert all markets
-            //       from a config file, letting a user create a market
-            //       is not realistic.
+            //       The correct thing to do is to find the market in the database
+            //       and read it into the program here.
+            //
+            //       If it's not found, then the user entered a market that DNE.
             None => {
                 // The market doesn't exist, create it.
                 // buy is a max heap, sell is a min heap.
@@ -332,7 +333,7 @@ impl Exchange {
                     // TODO: Do we want to update market stats? total_cancelled maybe?
                     let mut to_remove = Vec::new();
                     to_remove.push(order_to_cancel.order_id);
-                    database::delete_pending_orders(&to_remove, conn, "CANCELLED");
+                    database::write_delete_pending_orders(&to_remove, conn, "CANCELLED");
 
 
                     return Ok(());

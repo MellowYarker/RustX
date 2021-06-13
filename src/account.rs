@@ -221,7 +221,7 @@ ORDER BY e.filled_OID;";
             */
             None => {
                 // Doesn't update cache.
-                return database::match_pending_order(self.id.unwrap(), id, conn);
+                return database::read_match_pending_order(self.id.unwrap(), id, conn);
             }
         }
     }
@@ -588,8 +588,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
         let market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
 
-        // Query strings that we will extend.
-        let mut update_filled_query_string = String::new();
+        // Vector of <Filled, OrderID>, will pass this to database API to structure update.
+        let mut update_partial_filled_vec: Vec<(i32, i32)> = Vec::new();
 
         for trade in trades.iter() {
             let mut id = trade.filled_oid;
@@ -609,33 +609,39 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             // After processing the order, move it to executed trades.
             match market.get_mut(&id) {
                 Some(order) => {
+                    // order completely filled
                     if trade.exchanged == (order.quantity - order.filled) {
-                        entries_to_remove.push(order.order_id); // order completely filled
+                        entries_to_remove.push(order.order_id);
                     } else if !is_filler {
                         // Don't update the filler's filled count,
                         // new orders are added to accounts in submit_order_to_market.
-                        order.filled += trade.exchanged; // order partially filled
-                        // Extend our query string
-                        update_filled_query_string
-                            .push_str(format!["UPDATE Orders set filled={} WHERE order_id={}; ", order.filled, order.order_id].as_str());
+
+                        order.filled += trade.exchanged;
+                        // Extend the vector of orders we will update
+                        update_partial_filled_vec.push((order.filled, order.order_id));
                     }
                 },
                 None => ()
             }
         }
 
-        // For each trade, update `filled` in Orders table.
-        database::update_filled_counts(&update_filled_query_string, conn);
-
         // Remove any completed orders from the accounts pending orders.
         for i in &entries_to_remove {
             market.remove(&i);
         }
-        // Remove all the completed orders from the database's pending table.
-        // Sets Orders to complete, and sets filled = quantity.
+
+        // TODO - Performance Opportunity:
+        //      - If we can perform both these updates in parallel, i.e execute the functions in
+        //        separate threads, on different DB connections, that might be a good idea!
+
+        // Remove all the completed orders from the database's pending table
+        // and update Orders table.
         if entries_to_remove.len() > 0 {
-            database::delete_pending_orders(&entries_to_remove, conn, "COMPLETE");
+            database::write_delete_pending_orders(&entries_to_remove, conn, "COMPLETE");
         }
+
+        // For each trade that partially filled an order, update `filled` in Orders table.
+        database::write_partial_update_filled_counts(&update_partial_filled_vec, conn);
     }
 
     /* Given a vector of Trades, update all the accounts

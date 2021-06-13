@@ -7,9 +7,23 @@ use std::io::prelude::*;
 
 use crate::exchange::{Exchange, Market, Order, SecStat, Trade};
 
-// Directly inserts this order to the market
-// If the market didn't exist, we will return it as Some(Market)
-// so the calling function can add it to the exchange.
+/* ---- Specification for the db API ----
+ *
+ *      Functions that start with populate will read from the db on program startup ONLY.
+ *          - These populate critical runtime data-structures.
+ *      Functions that start with read will read from the db during normal program execution.
+ *      Functions that start with write will write to the db during normal program execution.
+ *
+ *  If more than 1 operation occurs in a function, ex. deletes AND updates, this will be
+ *  clearly described above the function.
+ **/
+
+/* Helper function for populate_exchange_markets.
+ *
+ * Directly inserts this order to the market
+ * If the market didn't exist, we will return it as Some(Market)
+ * so the calling function can add it to the exchange.
+ */
 fn direct_insert_to_market(potential_market: Option<&mut Market>, order: &Order) -> Option<Market> {
     // Get the market, or create it if it doesn't exist yet.
     match potential_market {
@@ -96,8 +110,10 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
     // We order by symbol (market) and action, since this will probably increase cache hits.
     // This is because we populate the buys, then the sells, then move to the next market. High
     // spacial locality.
-    for row in conn.query("SELECT o.* FROM PendingOrders p, Orders o WHERE o.order_ID=p.order_ID ORDER BY (o.symbol, o.action)", &[])
-        .expect("Something went wrong in the query.") {
+    for row in conn.query("\
+SELECT o.* FROM PendingOrders p, Orders o
+WHERE o.order_ID=p.order_ID
+ORDER BY (o.symbol, o.action)", &[]).expect("Something went wrong in the query.") {
 
         let order_id: i32 = row.get(0);
         let symbol: &str = row.get(1);
@@ -114,25 +130,6 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
         if let Some(market) = direct_insert_to_market(exchange.live_orders.get_mut(&order.symbol), &order) {
             exchange.live_orders.insert(order.symbol.clone(), market);
         };
-    }
-}
-
-/* Gets all markets and puts them in pending orders, only used when we run simulations! */
-pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mut Client) {
-    // We order by symbol (market) and action, since this will probably increase cache hits.
-    // This is because we populate the buys, then the sells, then move to the next market. High
-    // spacial locality.
-    let mut i = 0;
-    let limit = symbol_vec.capacity();
-    for row in conn.query("SELECT symbol FROM Markets;", &[])
-        .expect("Something went wrong in the query.") {
-
-        let symbol: &str = row.get(0);
-        symbol_vec.push(symbol.to_string());
-        i += 1;
-        if i == limit {
-            return;
-        }
     }
 }
 
@@ -206,6 +203,7 @@ Values
             Err(e) => eprintln!("{}", e)
         }
     }
+
     query_string.pop(); // Removes newline
     query_string.pop(); // Removes last comma
 
@@ -227,7 +225,9 @@ Values
  **/
 pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
     let mut trades: Vec<Trade> = Vec::new();
-    for row in conn.query("SELECT * FROM ExecutedTrades WHERE symbol=$1", &[&symbol.as_str()]).expect("Read Trades query (History) failed!") {
+    for row in conn.query("SELECT * FROM ExecutedTrades WHERE symbol=$1",
+                          &[&symbol.as_str()]).expect("Read Trades query (History) failed!") {
+
         let symbol:     &str = row.get(0);
         let action:     &str = row.get(1);
         let price:      f64  = row.get(2);
@@ -245,15 +245,14 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
                                   filler_oid,
                                   filler_uid,
                                   exchanged
-                                 )
-                    );
+                                 ));
     }
     return Some(trades);
 }
 
 /* TODO: Untested, not sure even how to test this.
  * Returns Some(action) if the user owns this pending order, else None. */
-pub fn match_pending_order(user_id: i32, order_id: i32, conn: &mut Client) -> Option<String> {
+pub fn read_match_pending_order(user_id: i32, order_id: i32, conn: &mut Client) -> Option<String> {
     let result = conn.query("\
 SELECT action
 FROM Orders o, PendingOrders p
@@ -353,9 +352,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
     };
 }
 
-/* Writes to the database.
- * This function updates a market's statistics.
- **/
+/* Update a market's statistics with the current data. */
 pub fn write_update_market_stats(stats: &SecStat, conn: &mut Client) {
     let query_string = "\
 UPDATE Markets
@@ -363,21 +360,19 @@ SET (total_buys, total_sells, filled_buys, filled_sells, latest_price) =
 ($1, $2, $3, $4, $5)
 WHERE Markets.symbol = $6;";
 
-    if let Err(e) = conn.query(query_string, &[ &stats.total_buys,
-                                                &stats.total_sells,
-                                                &stats.filled_buys,
-                                                &stats.filled_sells,
-                                                &stats.last_price.unwrap(),
-                                                &stats.symbol
+    if let Err(e) = conn.execute(query_string, &[&stats.total_buys,
+                                                 &stats.total_sells,
+                                                 &stats.filled_buys,
+                                                 &stats.filled_sells,
+                                                 &stats.last_price.unwrap(),
+                                                 &stats.symbol
     ]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Market Stats Update query!");
     };
 }
 
-/* Writes to the database.
- * This function inserts the trades in the vector into the database.
- */
+/* Inserts the trades in the vector into ExecutedTrades table. */
 pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
 
     let mut query_string = String::from("\
@@ -393,34 +388,61 @@ VALUES \n");
                                     trade.filled_uid,
                                     trade.filler_oid,
                                     trade.filler_uid,
-                                    trade.exchanged,
-                                    ].as_str());
+                                    trade.exchanged
+                                     ].as_str());
     }
+
     query_string.pop();
     query_string.pop();
+
     query_string.push(';');
-    if let Err(e) = conn.query(query_string.as_str(), &[]) {
+
+    if let Err(e) = conn.execute(query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
-        eprintln!("{}", query_string);
         panic!("Insert Trades query failed!");
     }
 
 }
 
-/* This function takes a string reference, which consists of SQL
- * statements that update the filled counts for relevant rows.
- * */
-pub fn update_filled_counts(query_string: &String, conn: &mut Client) {
-    if let Err(e) = conn.query(query_string.as_str(), &[]) {
+/* Updates the Orders table's filled column for orders that
+ * have been partially filled.
+ **/
+pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn: &mut Client) {
+
+    let mut query_string = String::new();
+    for order in updated_orders {
+        query_string.push_str(format!["UPDATE Orders set filled={} WHERE order_id={};\n", order.0, order.1].as_str());
+    }
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction to update Order filled counts");
+
+    if let Err(e) = transaction.execute(query_string.as_str(), &[]) {
         eprintln!("{:?}", e);
         panic!("Filled Counts Update query failed!");
     }
+
+    if let Err(e) = transaction.commit() {
+        eprintln!("{:?}", e);
+        panic!("Failed to commit transaction to update Order filled counts!");
+    }
 }
 
-/* Deletes order's from PendingOrders table.
- * Will set order status to COMPLETE and set filled to quantity.
- * */
-pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
+/* This is a multipurpose function:
+ *     - We DELETE orders from the PendingOrders table,
+ *       then simultaneously UPDATE the order in the Orders table.
+ *
+ * The status of the order is determined by the calling function,
+ * and depending on the status, we set the amount filled.
+ *
+ * There are 2 possible status updates:
+ *      - COMPLETE  => filled = quantity
+ *      - CANCELLED => filled = filled
+ *
+ * Disclaimer:
+ *      I could move the Orders table UPDATE to write_update_filled_counts,
+ *      but I think it's important to atomically update both tables in this case.
+ **/
+pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
     // TODO: We can run this all in parallel!
     // Determine if order completed or cancelled
     let filled: &str;
@@ -438,12 +460,12 @@ pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status
     }
 
     // Remove last ", "
-    delete_query_string.pop();
-    delete_query_string.pop();
-    delete_query_string.push_str(");");
+    for _ in 0..2 {
+        delete_query_string.pop();
+        update_query_string.pop();
+    }
 
-    update_query_string.pop();
-    update_query_string.pop();
+    delete_query_string.push_str(");");
     update_query_string.push_str(");");
 
     let mut transaction = conn.transaction().expect("Failed to initiate transaction in delete_pending_orders");
@@ -459,6 +481,28 @@ pub fn delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status
 
     if let Err(e) = transaction.commit() {
         eprintln!("{:?}", e);
-        panic!("Failed to commit transaction in delete_pending_orders");
+        panic!("Failed to commit transaction in write_delete_pending_orders");
     }
 }
+
+/* Reads the first `n` market symbols into the symbol_vec Vector.
+ * `n` is described by the capacity of symbol_vec.
+ *
+ * This can *almost* be thought of as a 'populate' function, however
+ * we need to call it each time we run a simulation.
+ */
+pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mut Client) {
+    let mut i = 0;
+    let limit = symbol_vec.capacity();
+    for row in conn.query("SELECT symbol FROM Markets;", &[])
+        .expect("Something went wrong in the query.") {
+
+        let symbol: &str = row.get(0);
+        symbol_vec.push(symbol.to_string());
+        i += 1;
+        if i == limit {
+            return;
+        }
+    }
+}
+
