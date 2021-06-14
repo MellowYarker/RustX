@@ -210,34 +210,24 @@ impl Users {
         if self.users.contains_key(&account.username) {
             return None;
         } else {
-            let query_string = "SELECT ID FROM Account WHERE Account.username=$1;";
-            for row in conn.query(query_string, &[&account.username]) {
-                // If a user exists, return None
-                if let Some(_) = row.get(0) {
-                    return None;
-                }
+
+            // Check if the user exists.
+            if let true = database::read_account_exists(&account.username, conn) {
+                return None;
             }
+
             // User doesn't exist, so create a new one.
             let mut account = account;
             self.total = account.set_id(&self);
 
             // Insert to db
-            // TODO: Insert regsiter_time.
-            let query_string = "INSERT INTO Account (ID, username, password) VALUES ($1, $2, $3);";
-            match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
-                Ok(_) => {
-                    // Cache in program
+            match database::write_insert_new_account(&account, conn) {
+                Ok(()) => {
                     self.cache_user(account);
                     return Some(self.total);
                 },
-                Err(e) => {
-                    eprintln!("{:?}", e);
-                    panic!("Something went wrong with the insert!");
-                }
+                Err(()) => panic!("Something went wrong while inserting a new user!")
             }
-            // TODO:
-            //  This should actually return an Error because we failed to insert to the database!
-            return None;
         }
     }
 

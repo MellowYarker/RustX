@@ -218,6 +218,19 @@ Values
 
 }
 
+/* Check the database to see if the account user exists.  */
+pub fn read_account_exists(username: &String, conn: &mut Client) -> bool {
+    for row in conn.query("SELECT ID FROM Account WHERE Account.username = $1",
+                          &[username]).expect("There was an issue while checking if the user is in the database.") {
+
+        let id: Option<i32> = row.get(0);
+        if let Some(_) = id {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* TODO: Order inserts by time executed!
  * TODO: Use a prepared statement!
  * Read the pending orders that belong to this user
@@ -357,6 +370,20 @@ WHERE p.order_id = $1
         }
     }
     return None;
+}
+
+/* TODO: Prepared statement.
+ * TODO: Insert regsiter_time.
+ * Write a new user to the database. */
+pub fn write_insert_new_account(account: &UserAccount, conn: &mut Client) -> Result<(), ()> {
+    let query_string = "INSERT INTO Account (ID, username, password) VALUES ($1, $2, $3);";
+    match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
+        Ok(_) => return Ok(()),
+        Err(e) => {
+            eprintln!("{:?}", e);
+            return Err(());
+        }
+    }
 }
 
 /* Writes to the database.
