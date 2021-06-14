@@ -1,11 +1,11 @@
 use postgres::Client;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
 // IO stuff
 use std::io::prelude::*;
 
-use crate::exchange::{Exchange, Market, Order, SecStat, Trade};
+use crate::exchange::{Exchange, Market, Order, SecStat, Trade, UserAccount};
 
 /* ---- Specification for the db API ----
  *
@@ -216,6 +216,88 @@ Values
 
     println!("Upgrade complete!");
 
+}
+
+/* TODO: Order inserts by time executed!
+ * TODO: Use a prepared statement!
+ * Read the pending orders that belong to this user
+ * into their account.
+ **/
+pub fn read_account_pending_orders(user: &mut UserAccount, conn: &mut Client) {
+    let query_string = "\
+SELECT o.* FROM Orders o, PendingOrders p
+WHERE o.order_ID = p.order_ID
+AND o.user_ID =
+    (SELECT ID FROM Account WHERE Account.username = $1)
+ORDER BY o.order_ID;";
+    for row in conn.query(query_string, &[&user.username]).expect("Query to fetch pending orders failed!") {
+        let order_id:       i32  = row.get(0);
+        let symbol:         &str = row.get(1);
+        let action:         &str = row.get(2);
+        let quantity:       i32  = row.get(3);
+        let filled:         i32  = row.get(4);
+        let price:          f64  = row.get(5);
+        let user_id:        i32  = row.get(6);
+        // let status:         i32  = row.get(7); // <---- unnecessary, we know it's pending
+        // let time_placed:    i32  = row.get(7); // <---- TODO
+        // let time_updated:   i32  = row.get(7); // <---- TODO
+
+        // We will just re-insert everything.
+        let order = Order::direct(action,
+                                  symbol,
+                                  quantity,
+                                  filled,
+                                  price,
+                                  order_id,
+                                  user_id);
+        let market = user.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
+        market.insert(order.order_id, order);
+    }
+}
+
+
+/* TODO: Order inserts by time executed!
+ * Get this accounts executed trades from the database.
+ **/
+pub fn read_account_executed_trades(user: &UserAccount, executed_trades: &mut Vec<Trade>, conn: &mut Client) {
+    // First, lets get trades where we had our order filled.
+    let query_string = "\
+SELECT * FROM ExecutedTrades e
+WHERE
+e.filled_UID = (SELECT ID FROM Account WHERE Account.username = $1) OR
+e.filler_UID = (SELECT ID FROM Account WHERE Account.username = $1)
+ORDER BY e.filled_OID;";
+
+    for row in conn.query(query_string, &[&user.username]).expect("Query to fetch executed trades failed!") {
+        let symbol:     &str = row.get(0);
+        let mut action: &str = row.get(1);
+        let price:      f64  = row.get(2);
+        let filled_oid: i32  = row.get(3);
+        let filled_uid: i32  = row.get(4);
+        let filler_oid: i32  = row.get(5);
+        let filler_uid: i32  = row.get(6);
+        let exchanged:  i32  = row.get(7);
+        // let exec_time:  date  = row.get(8); // <--- TODO
+
+        // Switch the action because we were the filler.
+        if user.id.unwrap() == filler_uid {
+            match action {
+                "BUY" => action = "SELL",
+                "SELL" => action = "BUY",
+                _ => ()
+            }
+        }
+
+        let trade = Trade::direct(symbol,
+                                  action,
+                                  price,
+                                  filled_oid,
+                                  filled_uid,
+                                  filler_oid,
+                                  filler_uid,
+                                  exchanged);
+        executed_trades.push(trade);
+    }
 }
 
 /* TODO: Accept time periods!

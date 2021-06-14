@@ -60,113 +60,6 @@ impl UserAccount {
         return self.id.unwrap();
     }
 
-    /* TODO: Order inserts by time executed!
-     * TODO: Move sql stuff to database.rs
-     * Get this accounts pending orders from the database.
-     **/
-    fn fetch_account_pending_orders(&mut self, conn: &mut Client) {
-        let query_string = "\
-SELECT o.* FROM Orders o, PendingOrders P
-WHERE o.order_ID = p.order_ID
-AND o.user_ID =
-    (SELECT ID FROM Account
-     WHERE Account.username = $1)
-ORDER BY o.order_ID;";
-        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch pending orders failed!") {
-            let order_id:       i32  = row.get(0);
-            let symbol:         &str = row.get(1);
-            let action:         &str = row.get(2);
-            let quantity:       i32  = row.get(3);
-            let filled:         i32  = row.get(4);
-            let price:          f64  = row.get(5);
-            let user_id:        i32  = row.get(6);
-            // let status:         i32  = row.get(7); // <---- TODO
-            // let time_placed:    i32  = row.get(7); // <---- TODO
-            // let time_updated:   i32  = row.get(7); // <---- TODO
-
-            // We will just re-insert everything.
-            let order = Order::direct(action,
-                                      symbol,
-                                      quantity,
-                                      filled,
-                                      price,
-                                      order_id,
-                                      user_id);
-            let market = self.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-            market.insert(order.order_id, order);
-        }
-    }
-
-    /* TODO: Order inserts by time executed!
-     * TODO: Move sql stuff to database.rs
-     * Get this accounts executed trades from the database.
-     **/
-    fn fetch_account_executed_trades(&self, executed_trades: &mut Vec<Trade>, conn: &mut Client) {
-        // First, lets get trades where we had our order filled.
-        let query_string = "\
-SELECT * FROM ExecutedTrades e
-WHERE e.filled_UID =
-    (SELECT ID FROM Account WHERE Account.username = $1)
-ORDER BY e.filled_OID;";
-
-        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
-            let symbol:     &str = row.get(0);
-            let action:     &str = row.get(1);
-            let price:      f64  = row.get(2);
-            let filled_oid: i32  = row.get(3);
-            let filled_uid: i32  = row.get(4);
-            let filler_oid: i32  = row.get(5);
-            let filler_uid: i32  = row.get(6);
-            let exchanged:  i32  = row.get(7);
-            // let exec_time:  date  = row.get(8); // <--- TODO
-            let trade = Trade::direct(symbol,
-                                      action,
-                                      price,
-                                      filled_oid,
-                                      filled_uid,
-                                      filler_oid,
-                                      filler_uid,
-                                      exchanged);
-            executed_trades.push(trade);
-        }
-
-        // Next, lets get trades where we were the filler.
-        let query_string = "\
-SELECT * FROM ExecutedTrades e
-WHERE e.filler_UID =
-    (SELECT ID FROM Account WHERE Account.username = $1)
-ORDER BY e.filled_OID;";
-
-        for row in conn.query(query_string, &[&self.username]).expect("Query to fetch executed trades failed!") {
-            let symbol:     &str = row.get(0);
-            let mut action: &str = row.get(1);
-            let price:      f64  = row.get(2);
-            let filled_oid: i32  = row.get(3);
-            let filled_uid: i32  = row.get(4);
-            let filler_oid: i32  = row.get(5);
-            let filler_uid: i32  = row.get(6);
-            let exchanged:  i32  = row.get(7);
-            // let exec_time:  date  = row.get(8); // <--- TODO
-
-            // Switch the action because we were the filler.
-            match action.to_string().as_str() {
-                "BUY" => action = "SELL",
-                "SELL" => action = "BUY",
-                _ => ()
-            }
-
-            let trade = Trade::direct(symbol,
-                                      action,
-                                      price,
-                                      filled_oid,
-                                      filled_uid,
-                                      filler_oid,
-                                      filler_uid,
-                                      exchanged);
-            executed_trades.push(trade);
-        }
-    }
-
     /*
      * Returns true if this order will not fill any pending orders placed by
      * this user. Otherwise, returns false.
@@ -294,7 +187,7 @@ impl Users {
 
             let authenticated = true;
             if let Ok(account) = self.get_mut(&username.to_string(), authenticated) {
-                account.fetch_account_pending_orders(conn);
+                database::read_account_pending_orders(account, conn);
             }
         }
     }
@@ -431,7 +324,7 @@ impl Users {
                 Ok(mut account) => {
                     // Since our user will be cached, and we are likely to do things with the user.
                     // We should probably make sure the in-mem pending orders are consistent w/ the database!
-                    account.fetch_account_pending_orders(conn);
+                    database::read_account_pending_orders(&mut account, conn);
                     self.cache_user(account);
                 },
                 Err(e) => return Err(e)
@@ -510,7 +403,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 let mut account = UserAccount::direct(recv_id, recv_username, recv_password);
 
                 // Fill this account with the pending orders
-                account.fetch_account_pending_orders(conn);
+                database::read_account_pending_orders(&mut account, conn);
                 return (None, Some(account));
             }
         }
@@ -530,9 +423,9 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
                 // TODO: The cached pending orders are probably up to date?
                 //       Don't think we need to call this.
-                account.fetch_account_pending_orders(&mut client);
+                database::read_account_pending_orders(account, &mut client);
                 let mut executed_trades: Vec<Trade> = Vec::new();
-                account.fetch_account_executed_trades(&mut executed_trades, &mut client);
+                database::read_account_executed_trades(account, &mut executed_trades, &mut client);
 
                 println!("\n\tOrders Awaiting Execution");
                 for (_, market) in account.pending_orders.iter() {
