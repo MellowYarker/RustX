@@ -284,7 +284,7 @@ impl Users {
      * Insert a user to program cache from database
      */
     pub fn populate_from_db(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT id, username, password FROM Account", &[]).expect("Something went wrong in the query.") {
+        for row in conn.query("SELECT id, username, password FROM Account;", &[]).expect("Something went wrong in the query.") {
             let id: i32 = row.get(0);
             let username: &str = row.get(1);
             let password: &str = row.get(2);
@@ -303,7 +303,7 @@ impl Users {
      * into the database.rs file, and group them into 1 function.
      * */
     pub fn direct_update_total(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT count(*) FROM Account", &[]).expect("Something went wrong in the query.") {
+        for row in conn.query("SELECT count(*) FROM Account;", &[]).expect("Something went wrong in the query.") {
             let count: i64 = row.get(0);
             self.total = i32::try_from(count).unwrap();
         }
@@ -317,7 +317,7 @@ impl Users {
         if self.users.contains_key(&account.username) {
             return None;
         } else {
-            let query_string = "SELECT ID FROM Account WHERE Account.username=$1";
+            let query_string = "SELECT ID FROM Account WHERE Account.username=$1;";
             for row in conn.query(query_string, &[&account.username]) {
                 // If a user exists, return None
                 if let Some(_) = row.get(0) {

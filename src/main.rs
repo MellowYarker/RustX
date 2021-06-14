@@ -15,10 +15,8 @@ use std::io::{self, prelude::*};
 use postgres::{Client, NoTls};
 
 fn main() {
-    // Our central exchange, everything happens here.
-    let mut exchange: Exchange = Exchange::new();
-    // All our users are stored here.
-    let mut users: Users = Users::new();
+    let mut exchange: Exchange = Exchange::new();   // Our central exchange, everything happens here.
+    let mut users: Users = Users::new();            // All our users are stored here.
 
     // Read in the users from the database.
     // TODO: Which users should be read in?
@@ -31,10 +29,8 @@ fn main() {
 
     println!("Connected to database.");
 
-    // gets all users and reads their pending orders.
-    users.populate_from_db(&mut client);
-    // Read in the total number of users.
-    users.direct_update_total(&mut client);
+    users.populate_from_db(&mut client);    // gets all users and reads their pending orders.
+    users.direct_update_total(&mut client); // Read in the total number of users.
 
     /* TODO
      *  We need to populate our exchange with the relevant data from the database.
