@@ -383,14 +383,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         match self.users.get_mut(username) {
             Some(account) => return (Some(account), None),
             None => {
-                // Get from database and construct account
-                let result = conn.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]).expect("User not found in database! This is an internal error, it should not occur.");
-                let row = &result[0];
-                let recv_id: i32 = row.get(0);
-                let recv_username: &str = row.get(1);
-                let recv_password: &str = row.get(2);
-
-                let mut account = UserAccount::direct(recv_id, recv_username, recv_password);
+                let mut account = match database::read_account(username, conn) {
+                    Ok(acc) => acc,
+                    Err(_) => panic!("Something went wrong while trying to get a user from the database!")
+                };
 
                 // Fill this account with the pending orders
                 database::read_account_pending_orders(&mut account, conn);

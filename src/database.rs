@@ -231,6 +231,24 @@ pub fn read_account_exists(username: &String, conn: &mut Client) -> bool {
     return false;
 }
 
+/* Read the account with the given username and return the account. */
+pub fn read_account(username: &String, conn: &mut Client) -> Result<UserAccount, postgres::error::Error>{
+    match conn.query("SELECT ID, username, password FROM Account where Account.username = $1",&[username]) {
+        Ok(result) => {
+            let row = &result[0];
+            let recv_id: i32 = row.get(0);
+            let recv_username: &str = row.get(1);
+            let recv_password: &str = row.get(2);
+
+            return Ok(UserAccount::direct(recv_id, recv_username, recv_password));
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            return Err(e);
+        }
+    }
+}
+
 /* TODO: Order inserts by time executed!
  * TODO: Use a prepared statement!
  * Read the pending orders that belong to this user
