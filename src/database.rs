@@ -647,6 +647,24 @@ pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_
     }
 }
 
+/* Returns true if the market exists in our database, false otherwise. */
+pub fn read_market_exists(market: &String, conn: &mut Client) -> bool {
+    let query_string = "SELECT symbol from Markets where symbol=$1;";
+    match conn.query(query_string, &[market]) {
+        Ok(result) => {
+            if result.len() == 1 {
+                return true;
+            }
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Something went wrong while querying the database for the market symbol.");
+        }
+    }
+
+    return false;
+}
+
 /* Reads the first `n` market symbols into the symbol_vec Vector.
  * `n` is described by the capacity of symbol_vec.
  *

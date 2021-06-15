@@ -252,34 +252,38 @@ impl Exchange {
             //
             //       If it's not found, then the user entered a market that DNE.
             None => {
-                // The market doesn't exist, create it.
-                // buy is a max heap, sell is a min heap.
-                let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
-                let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+                if database::read_market_exists(&order.symbol, conn) {
+                    // The market doesn't exist, create it.
+                    // buy is a max heap, sell is a min heap.
+                    let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
+                    let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
 
-                // Store order on market, and in users account.
-                match &order.action[..] {
-                    "BUY" => {
-                        buy_heap.push(order.clone());
-                    },
-                    "SELL" => {
-                        sell_heap.push(Reverse(order.clone()));
-                    },
-                    // We can never get here.
-                    _ => ()
-                };
+                    // Store order on market, and in users account.
+                    match &order.action[..] {
+                        "BUY" => {
+                            buy_heap.push(order.clone());
+                        },
+                        "SELL" => {
+                            sell_heap.push(Reverse(order.clone()));
+                        },
+                        // We can never get here.
+                        _ => ()
+                    };
 
-                // Create the new market
-                let new_market = Market::new(buy_heap, sell_heap);
-                self.live_orders.insert(order.symbol.clone(), new_market);
+                    // Create the new market
+                    let new_market = Market::new(buy_heap, sell_heap);
+                    self.live_orders.insert(order.symbol.clone(), new_market);
 
-                // Add the symbol name and order to this accounts pending orders.
-                let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-                new_account_market.insert(order.order_id, order.clone());
+                    // Add the symbol name and order to this accounts pending orders.
+                    let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
+                    new_account_market.insert(order.order_id, order.clone());
 
-                // Since this is the first order, initialize the stats for this security.
-                new_price = self.update_state(&order, users, None, conn);
-                // self.init_stats(&order);
+                    // Since this is the first order, initialize the stats for this security.
+                    new_price = self.update_state(&order, users, None, conn);
+                    // self.init_stats(&order);
+                } else {
+                    eprintln!("The market ${} was not found in the database. User error!", order.symbol);
+                }
             }
         }
 
