@@ -1,6 +1,7 @@
 use postgres::Client;
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
+use std::convert::TryFrom;
 
 // IO stuff
 use std::io::prelude::*;
@@ -219,6 +220,21 @@ Values
 
 }
 
+/* Reads total user count from database for new user IDs. */
+pub fn read_total_accounts(conn: &mut Client) -> i32 {
+    match conn.query("SELECT count(*) FROM Account;", &[]) {
+        Ok(result) => {
+            let row = &result[0];
+            let count: i64 = row.get(0);
+            return i32::try_from(count).unwrap();
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Query to get total accounts number failed");
+        }
+    }
+}
+
 /* Check the database to see if the account user exists.  */
 pub fn read_account_exists(username: &String, conn: &mut Client) -> bool {
     for row in conn.query("SELECT ID FROM Account WHERE Account.username = $1",
@@ -267,8 +283,8 @@ pub fn read_auth_user<'a>(username: &'a String, password: &String, conn: &mut Cl
 }
 
 /* Read the account with the given username and return the account. */
-pub fn read_account(username: &String, conn: &mut Client) -> Result<UserAccount, postgres::error::Error>{
-    match conn.query("SELECT ID, username, password FROM Account where Account.username = $1",&[username]) {
+pub fn read_account(username: &String, conn: &mut Client) -> Result<UserAccount, postgres::error::Error> {
+    match conn.query("SELECT ID, username, password FROM Account where Account.username = $1", &[username]) {
         Ok(result) => {
             let row = &result[0];
             let recv_id: i32 = row.get(0);
@@ -276,6 +292,22 @@ pub fn read_account(username: &String, conn: &mut Client) -> Result<UserAccount,
             let recv_password: &str = row.get(2);
 
             return Ok(UserAccount::direct(recv_id, recv_username, recv_password));
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            return Err(e);
+        }
+    }
+}
+
+/* Read the account with the given user ID and return the username. */
+pub fn read_user_by_id(id: i32, conn: &mut Client) -> Result<String, postgres::error::Error> {
+    match conn.query("SELECT username FROM Account where Account.id = $1", &[&id]) {
+        Ok(result) => {
+            let row = &result[0];
+            let recv_username: &str = row.get(0);
+
+            return Ok(recv_username.to_string());
         },
         Err(e) => {
             eprintln!("{}", e);

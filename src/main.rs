@@ -28,9 +28,13 @@ fn main() {
         .expect("Failed to connect to Database. Please ensure it is up and running.");
 
     println!("Connected to database.");
+    // println!("Getting users.");
 
     // Gets all users, reads in their pending orders, and sets total # users
-    users.populate_users_from_db(&mut client);
+    // users.populate_users_from_db(&mut client);
+
+    // Reads total # users
+    users.direct_update_total(&mut client);
 
     /* TODO
      *  We need to populate our exchange with the relevant data from the database.
@@ -38,6 +42,7 @@ fn main() {
      *      - Top N buys and sells in each market
      *      - Current statistics for every market
      * */
+    println!("Getting markets.");
     // Fill the pending orders of the markets
     database::populate_exchange_markets(&mut exchange, &mut client);
     // Fill the statistics for each market

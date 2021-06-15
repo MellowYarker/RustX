@@ -2,7 +2,6 @@ use crate::exchange::requests::Order;
 use crate::exchange::filled::Trade;
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
 
 use postgres::{Client, NoTls};
 use crate::database;
@@ -201,12 +200,8 @@ impl Users {
     }
 
     /* Update the total user count. */
-    fn direct_update_total(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT count(*) FROM Account;", &[])
-            .expect("Something went wrong in the query.") {
-            let count: i64 = row.get(0);
-            self.total = i32::try_from(count).unwrap();
-        }
+    pub fn direct_update_total(&mut self, conn: &mut Client) {
+        self.total = database::read_total_accounts(conn);
     }
 
     /* If an account with this username exists, do nothing, otherwise
@@ -421,7 +416,20 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         //      1. Check the id_map cache
         //      2. If ID not found, check the database
         //      3. Update the id_map cache (LRU)
-        let username: String = self.id_map.get(&id).expect("update_single_user Error couldn't get username from userID").clone();
+
+        let username: String = match self.id_map.get(&id) {
+            Some(name) => name.clone(),
+            None => {
+                // Search the database for the user with this id.
+                // Do not update the cache
+                let result = database::read_user_by_id(id, conn);
+                if let Err(_) = result {
+                    panic!("Query to get user by id failed!");
+                };
+
+                result.unwrap()
+            }
+        };
 
         // If _get_mut gives us a database entry, place_holder will hold it
         // and account will refer to place_holder.
