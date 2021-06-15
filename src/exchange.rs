@@ -174,7 +174,8 @@ impl Exchange {
 
     }
 
-    // TODO: Read past trades from database
+    // TODO: Once we store time, lets include timeframes?
+    //       Might be good for graphing price.
     // Shows the history of orders in this market.
     pub fn show_market_history(&self, symbol: &String, conn: &mut Client) {
         if let Some(trades) = database::read_trades(symbol, conn) {
@@ -190,20 +191,20 @@ impl Exchange {
         }
     }
 
-    /* Add an order to the security's order list.
-     * If the security isn't in the HashMap, create it.
+    /* Add an order to the market's order list,
+     * and may fill pending orders whose conditions are satisfied.
      * Assumes user has already been authenticated.
      *
-     * Returns Some(new_price) if trade occurred, else None.
+     * Returns the new price if trade occurred, otherwise, None or errors.
     */
-    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool, conn: &mut Client) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool, conn: &mut Client) -> Result<Option<f64>, String> {
 
         // Mutable reference to the account associated with given username.
         let account = match users.get_mut(username, auth) {
             Ok(acc) => acc,
             Err(e) => {
                 Users::print_auth_error(e);
-                return None;
+                return Err("".to_string());
             }
         };
         let mut order: Order = order;
@@ -270,12 +271,12 @@ impl Exchange {
                     // Since this is the first order, initialize the stats for this security.
                     new_price = self.update_state(&order, users, None, conn);
                 } else {
-                    eprintln!("The market ${} was not found in the database. User error!", order.symbol);
+                    return Err(format!["The market ${} was not found in the database. User error!", order.symbol]);
                 }
             }
         }
 
-        return new_price;
+        return Ok(new_price);
     }
 
     /* Cancel the order in the given market with the given order ID.
@@ -420,7 +421,9 @@ impl Exchange {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, account.id);
                 if account.validate_order(&order) {
-                    self.submit_order_to_market(users, order, username, true, conn);
+                    if let Err(e) = self.submit_order_to_market(users, order, username, true, conn) {
+                        eprintln!("{}", e);
+                    }
                 }
             }
         }

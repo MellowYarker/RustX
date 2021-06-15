@@ -186,8 +186,11 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
                             if account.validate_order(&order) {
-                                &exchange.submit_order_to_market(users, order.clone(), &username, true, conn);
-                                &exchange.show_market(&order.symbol);
+                                if let Err(e) =  &exchange.submit_order_to_market(users, order.clone(), &username, true, conn) {
+                                    eprintln!("{}", e);
+                                } else {
+                                    &exchange.show_market(&order.symbol);
+                                }
                             } else {
                                 eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
                             }
