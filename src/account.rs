@@ -173,11 +173,17 @@ impl Users {
         }
     }
 
-    /* TODO: Find a better way to do this.
-     * Insert a user to program cache from database
+    /* TODO:
+     *  I want this to be part of the database.rs file,
+     *  the only thing keeping me from doing that is we
+     *  call cache_user(), which I want to keep private.
+     *
+     * Insert a user to program cache from the database,
+     * and updates the count of users.
      */
-    pub fn populate_from_db(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT id, username, password FROM Account;", &[]).expect("Something went wrong in the query.") {
+    pub fn populate_users_from_db(&mut self, conn: &mut Client) {
+        for row in conn.query("SELECT id, username, password FROM Account;", &[])
+            .expect("Something went wrong while trying to query the database for all users.") {
             let id: i32 = row.get(0);
             let username: &str = row.get(1);
             let password: &str = row.get(2);
@@ -190,13 +196,14 @@ impl Users {
                 database::read_account_pending_orders(account, conn);
             }
         }
+
+        self.direct_update_total(conn);
     }
 
-    /* TODO: This is horrible. We need to move populate_from_db and this function
-     * into the database.rs file, and group them into 1 function.
-     * */
-    pub fn direct_update_total(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT count(*) FROM Account;", &[]).expect("Something went wrong in the query.") {
+    /* Update the total user count. */
+    fn direct_update_total(&mut self, conn: &mut Client) {
+        for row in conn.query("SELECT count(*) FROM Account;", &[])
+            .expect("Something went wrong in the query.") {
             let count: i64 = row.get(0);
             self.total = i32::try_from(count).unwrap();
         }
@@ -260,31 +267,6 @@ impl Users {
         return Err(AuthError::NoUser(username));
     }
 
-    /* Checks the database for this user.*/
-    fn auth_check_db<'a>(&self, username: &'a String, password: & String, conn: &mut Client) -> Result<UserAccount, AuthError<'a>> {
-        let query_string = "SELECT ID, username, password FROM Account WHERE Account.username = $1";
-        let result = conn.query(query_string, &[&username]).expect("Something went wrong with the authenticate query.");
-
-        // Did not find the user
-        if result.len() == 0 {
-            return Err(AuthError::NoUser(username));
-        }
-
-        // Found a user, usernames are unique so we get 1 row.
-        let row = &result[0];
-        let recv_id: i32 = row.get(0);
-        let recv_username: &str = row.get(1);
-        let recv_password: &str = row.get(2);
-
-        // User authenticated.
-        if *password == recv_password {
-            return Ok(UserAccount::direct(recv_id, recv_username, recv_password));
-        }
-
-        // Password was incorrect.
-        return Err(AuthError::BadPassword(None));
-    }
-
     /* If the username exists and the password is correct,
      * we return the user account.
      *
@@ -309,7 +291,7 @@ impl Users {
 
         // On cache miss, check the database.
         if cache_miss {
-            match self.auth_check_db(username, password, conn) {
+            match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
                 Ok(mut account) => {
                     // Since our user will be cached, and we are likely to do things with the user.

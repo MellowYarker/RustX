@@ -6,6 +6,7 @@ use std::cmp::Reverse;
 use std::io::prelude::*;
 
 use crate::exchange::{Exchange, Market, Order, SecStat, Trade, UserAccount};
+use crate::account::AuthError;
 
 /* ---- Specification for the db API ----
  *
@@ -229,6 +230,40 @@ pub fn read_account_exists(username: &String, conn: &mut Client) -> bool {
         }
     }
     return false;
+}
+
+/* Compare the provided username + password combo against the database.
+ * If they match, return the UserAccount, otherwise, return the error that occurred.
+ **/
+pub fn read_auth_user<'a>(username: &'a String, password: &String, conn: &mut Client) -> Result<UserAccount, AuthError<'a>> {
+    let query_string = "SELECT ID, username, password FROM Account WHERE Account.username = $1";
+    match conn.query(query_string, &[&username]) {
+        Ok(result) => {
+            // Did not find the user
+            if result.len() == 0 {
+                return Err(AuthError::NoUser(username));
+            }
+
+            // Found a user, usernames are unique so we get 1 row.
+            let row = &result[0];
+            let recv_id: i32 = row.get(0);
+            let recv_username: &str = row.get(1);
+            let recv_password: &str = row.get(2);
+
+            // User authenticated.
+            if *password == recv_password {
+                return Ok(UserAccount::direct(recv_id, recv_username, recv_password));
+            }
+
+            // Password was incorrect.
+            return Err(AuthError::BadPassword(None));
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Something went wrong with the authenticate query!");
+        }
+    }
+
 }
 
 /* Read the account with the given username and return the account. */

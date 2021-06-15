@@ -29,8 +29,8 @@ fn main() {
 
     println!("Connected to database.");
 
-    users.populate_from_db(&mut client);    // gets all users and reads their pending orders.
-    users.direct_update_total(&mut client); // Read in the total number of users.
+    // Gets all users, reads in their pending orders, and sets total # users
+    users.populate_users_from_db(&mut client);
 
     /* TODO
      *  We need to populate our exchange with the relevant data from the database.
