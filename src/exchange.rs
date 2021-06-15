@@ -49,13 +49,6 @@ impl Exchange {
         }
     }
 
-    // Initializes the stats for a market given the first order.
-    fn init_stats(&mut self, order: &Order) {
-        let stat = SecStat::from(order);
-        self.statistics.insert(stat.symbol.clone(), stat);
-        self.total_orders += 1;
-    }
-
     /* Update the stats for a market given the new order.
      * We modify total buys/sells, total order, as well as potentially price and filled orders.
      *
@@ -246,14 +239,10 @@ impl Exchange {
                 // Update the state of the exchange.
                 new_price = self.update_state(&order, users, trades, conn);
             },
-            // TODO: We don't want to create markets here anymore.
-            //       The correct thing to do is to find the market in the database
-            //       and read it into the program here.
-            //
-            //       If it's not found, then the user entered a market that DNE.
+            // The market doesn't exist, create it if found in DB,
+            // otherwise the user entered a market that DNE.
             None => {
                 if database::read_market_exists(&order.symbol, conn) {
-                    // The market doesn't exist, create it.
                     // buy is a max heap, sell is a min heap.
                     let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
                     let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
@@ -280,7 +269,6 @@ impl Exchange {
 
                     // Since this is the first order, initialize the stats for this security.
                     new_price = self.update_state(&order, users, None, conn);
-                    // self.init_stats(&order);
                 } else {
                     eprintln!("The market ${} was not found in the database. User error!", order.symbol);
                 }
