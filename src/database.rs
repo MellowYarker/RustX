@@ -1,4 +1,6 @@
 use postgres::Client;
+use chrono::Local;
+
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 use std::convert::TryFrom;
@@ -461,8 +463,11 @@ WHERE p.order_id = $1
  * TODO: Insert regsiter_time.
  * Write a new user to the database. */
 pub fn write_insert_new_account(account: &UserAccount, conn: &mut Client) -> Result<(), ()> {
-    let query_string = "INSERT INTO Account (ID, username, password) VALUES ($1, $2, $3);";
-    match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password]) {
+    // TODO: Eventually lets specify the timezone.
+    let now = Local::now();
+
+    let query_string = "INSERT INTO Account (ID, username, password, register_time) VALUES ($1, $2, $3, $4);";
+    match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password, &now]) {
         Ok(_) => return Ok(()),
         Err(e) => {
             eprintln!("{:?}", e);
@@ -480,8 +485,8 @@ pub fn write_insert_order(order: &Order, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     let query_string = "\
 INSERT INTO Orders
-(order_ID, symbol, action, quantity, filled, price, user_ID, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
+(order_ID, symbol, action, quantity, filled, price, user_ID, status, time_placed)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
 
     let status: &str;
     let mut add_to_pending = false;
@@ -492,6 +497,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
         status = "PENDING";
         add_to_pending = true;
     }
+
+    // TODO: Eventually lets specify the timezone
+    let now = Local::now();
+
     if let Err(e) = transaction.execute(query_string, &[ &order.order_id,
                                                 &order.symbol,
                                                 &order.action,
@@ -500,7 +509,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8);";
                                                 &order.price,
                                                 &order.user_id,
                                                 &status.to_string(),
-                                                // None, TODO time_placed
+                                                &now
                                                 // None  TODO time_updated
     ]) {
         eprintln!("{:?}", e);
@@ -569,12 +578,16 @@ WHERE Markets.symbol = $6;";
 /* Inserts the trades in the vector into ExecutedTrades table. */
 pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
 
+    // TODO: Eventually lets specify the timezone.
+    let now = Local::now();
+
     let mut query_string = String::from("\
 INSERT INTO ExecutedTrades
-(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged)
+(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
 VALUES \n");
+
     for trade in trades.iter() {
-        query_string.push_str(format!["('{}', '{}', {}, {}, {}, {}, {}, {}),\n",
+        query_string.push_str(format!["('{}', '{}', {}, {}, {}, {}, {}, {}, '{}'),\n",
                                     trade.symbol,
                                     trade.action,
                                     trade.price,
@@ -582,7 +595,8 @@ VALUES \n");
                                     trade.filled_uid,
                                     trade.filler_oid,
                                     trade.filler_uid,
-                                    trade.exchanged
+                                    trade.exchanged,
+                                    now
                                      ].as_str());
     }
 
@@ -603,9 +617,12 @@ VALUES \n");
  **/
 pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn: &mut Client) {
 
+    // TODO: Eventually lets specify the timezone.
+    let now = Local::now();
+
     let mut query_string = String::new();
     for order in updated_orders {
-        query_string.push_str(format!["UPDATE Orders set filled={} WHERE order_id={};\n", order.0, order.1].as_str());
+        query_string.push_str(format!["UPDATE Orders set filled={}, time_updated='{}' WHERE order_id={};\n", order.0, now, order.1].as_str());
     }
 
     let mut transaction = conn.transaction().expect("Failed to initiate transaction to update Order filled counts");
@@ -637,6 +654,10 @@ pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn
  *      but I think it's important to atomically update both tables in this case.
  **/
 pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
+
+    // TODO: Eventually lets specify the timezone.
+    let now = Local::now();
+
     // TODO: We can run this all in parallel!
     // Determine if order completed or cancelled
     let filled: &str;
@@ -646,7 +667,7 @@ pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_
         filled = "filled";
     }
     let mut delete_query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN (");
-    let mut update_query_string = format!["UPDATE Orders SET status='{}', filled={} WHERE order_id IN (", set_status, filled];
+    let mut update_query_string = format!["UPDATE Orders SET status='{}', filled={}, time_updated='{}' WHERE order_id IN (", set_status, filled, now];
 
     for order in order_ids.iter() {
         delete_query_string.push_str(format!["{}, ", order].as_str());
