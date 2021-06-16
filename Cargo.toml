@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 random-number = "0.1.6"
+postgres = "0.19.1"

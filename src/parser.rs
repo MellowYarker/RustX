@@ -1,10 +1,12 @@
 pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
 pub use crate::print_instructions;
+use postgres::Client;
+use crate::database;
 
 use crate::account::{UserAccount, Users};
 
 // IO stuff
-use std::io::BufReader;
+use std::io::{self, BufReader};
 use std::env;
 use std::fs::File;
 
@@ -49,6 +51,7 @@ fn malformed_req(req: &str, req_type: &str) {
        "cancel"     => eprintln!("Hint - format should be: {} symbol order_id username password", req),
        "info"       => eprintln!("Hint - format should be: {} symbol", req),
        "sim"        => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
+       "upgrade_db" => eprintln!("Hint - format should be: {} file_path username password", req),
        _            => ()
     }
 }
@@ -91,7 +94,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
             if let 6 = words.len() {
                 // Note that we do not provide an order ID (arg 4 is None).
                 // This value actually gets set later.
-                let order = Order::from( words[0].to_string(),
+                let order = Order::from( words[0].to_string().to_uppercase(),
                                          words[1].to_string().to_uppercase(),
                                          words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),// TODO we shouldn't panic here
                                          words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),     // TODO we shouldn't panic here
@@ -132,6 +135,17 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 return Err(());
             }
         },
+        // Upgrade the database, only the admin can do this.
+        "upgrade_db" => {
+            if let 3 = words.len() {
+                let username  = words[1].to_string();
+                let password  = words[2].to_string();
+                return Ok(Request::UpgradeDbReq(username, password));
+            } else {
+                malformed_req(&words[0], &words[0]);
+                return Err(());
+            }
+        },
         // Simulate a market for n time steps
         "simulate" => {
             if let 4 = words.len() {
@@ -161,19 +175,22 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users) {
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, conn: &mut Client) {
     match request {
         Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
-                "buy" | "sell" => {
+                "BUY" | "SELL" => {
                     // Try to get the account
-                    match users.authenticate(&username, &password) {
+                    match users.authenticate(&username, &password, conn) {
                         Ok(account) => {
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
                             if account.validate_order(&order) {
-                                &exchange.submit_order_to_market(users, order.clone(), &username, true);
-                                &exchange.show_market(&order.security);
+                                if let Err(e) =  &exchange.submit_order_to_market(users, order.clone(), &username, true, conn) {
+                                    eprintln!("{}", e);
+                                } else {
+                                    &exchange.show_market(&order.symbol);
+                                }
                             } else {
                                 eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
                             }
@@ -186,9 +203,9 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             }
         },
         Request::CancelReq(order_to_cancel, password) => {
-            match users.authenticate(&(order_to_cancel.username), &password) {
+            match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
-                    match exchange.cancel_order(&order_to_cancel, users) {
+                    match exchange.cancel_order(&order_to_cancel, users, conn) {
                         Ok(_) => println!("Order successfully cancelled."),
                         Err(e) => eprintln!("{}", e)
                     }
@@ -221,15 +238,20 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                     if exchange.statistics.contains_key(&req.symbol) {
                         exchange.show_market(&req.symbol);
                     } else {
-                        println!("Sorry, we have no market information on ${}", req.symbol);
+                        println!("${} is not a market!", req.symbol);
                     }
                 },
                 // Show the past orders of this market.
                 "history" => {
-                    if exchange.filled_orders.contains_key(&req.symbol) {
-                        exchange.show_market_history(&req.symbol);
-                    } else {
-                        println!("The symbol that was requested either doesn't exist or has no past trades.");
+                    match exchange.has_trades.get(&req.symbol) {
+                        Some(has_trades) => {
+                            if *has_trades {
+                                exchange.show_market_history(&req.symbol, conn);
+                            } else {
+                                println!("The market that was requested has no past trades!");
+                            }
+                        },
+                        None => println!("The symbol that was requested does not exist.")
                     }
                 },
                 _ => {
@@ -237,11 +259,37 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 }
             }
         },
+        Request::UpgradeDbReq(username, password) => {
+            // First, lets authenticate to make sure we're the admin.
+            if username.as_str() == "admin" {
+                match users.authenticate(&username, &password, conn) {
+                    Ok(_) => {
+                        println!("Please enter the file path to the configuration:");
+                        let mut file_path = String::new();
+                        io::stdin()
+                            .read_line(&mut file_path)
+                                .expect("Failed to read line");
+                        file_path = file_path.split_whitespace().next().expect("Please be sure to enter text!").to_string();
+                        match File::open(file_path) {
+                            Ok(f) => {
+                                database::upgrade_db(BufReader::new(f), conn);
+                            },
+                            Err(e) => {
+                                eprintln!("{}", e);
+                            }
+                        };
+                    },
+                    Err(e) => Users::print_auth_error(e)
+                }
+            } else {
+                eprintln!("Only the administrator can upgrade the database!");
+            }
+        },
         Request::SimReq(req) => {
             match &req.action[..] {
                 "simulate" => {
                     println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
-                    &exchange.simulate_market(&req, users);
+                    &exchange.simulate_market(&req, users, conn);
                 },
                 _ => {
                     eprintln!("I don't know how to handle this Simulation request.");
@@ -251,13 +299,13 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::UserReq(account, action) => {
             match &action[..] {
                 "create" => {
-                   match users.new_account(account) {
+                   match users.new_account(account, conn) {
                        Some(id) => println!("Successfully created new account with id {}.", id),
                        None => println!("Sorry, that username is already taken!")
                    }
                 },
                 "show" => {
-                    match users.authenticate(&account.username, &account.password) {
+                    match users.authenticate(&account.username, &account.password, conn) {
                         Ok(_) => {
                             users.print_user(&account.username, true);
                         },

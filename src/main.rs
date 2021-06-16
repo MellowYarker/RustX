@@ -3,6 +3,7 @@
 pub mod exchange;
 pub mod parser;
 pub mod account;
+pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
@@ -11,12 +12,37 @@ use std::env;
 use std::process;
 use std::io::{self, prelude::*};
 
-fn main() {
+use postgres::{Client, NoTls};
 
-    // Our central exchange, everything happens here.
-    let mut exchange: Exchange = Exchange::new();
-    // All our users are stored here.
-    let mut users: Users = Users::new();
+fn main() {
+    let mut exchange: Exchange = Exchange::new();   // Our central exchange, everything happens here.
+    let mut users: Users = Users::new();            // All our users are stored here.
+
+    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+        .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+    println!("Connected to database.");
+
+    // Reads total # users
+    users.direct_update_total(&mut client);
+
+    /* TODO
+     *  We need to populate our exchange with the relevant data from the database.
+     *  Data we care about includes:
+     *      - Top N buys and sells in each market
+     *      - Current statistics for every market
+     * */
+    println!("Getting markets.");
+    // Fill the pending orders of the markets
+    database::populate_exchange_markets(&mut exchange, &mut client);
+    // Fill the statistics for each market
+    database::populate_market_statistics(&mut exchange, &mut client);
+    // Fill the statistics for the exchange
+    database::populate_exchange_statistics(&mut exchange, &mut client);
+    // Fill the has_trades map for the exchange
+    database::populate_has_trades(&mut exchange, &mut client);
+
+    println!("Populated users, markets, and statistics.");
 
     let argument = match parser::command_args(env::args()) {
         Ok(arg) => arg,
@@ -43,7 +69,7 @@ fn main() {
                     // Our input has been validated, and we can now
                     // attempt to service the request.
                     println!("Servicing Request: {}", raw);
-                    parser::service_request(request, &mut exchange, &mut users);
+                    parser::service_request(request, &mut exchange, &mut users, &mut client);
                 },
                 Err(_) => return
             }
@@ -75,7 +101,7 @@ fn main() {
 
             // Our input has been validated, and we can now
             // attempt to service the request.
-            parser::service_request(request, &mut exchange, &mut users);
+            parser::service_request(request, &mut exchange, &mut users, &mut client);
         }
     }
 }
