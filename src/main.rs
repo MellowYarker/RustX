@@ -18,20 +18,10 @@ fn main() {
     let mut exchange: Exchange = Exchange::new();   // Our central exchange, everything happens here.
     let mut users: Users = Users::new();            // All our users are stored here.
 
-    // Read in the users from the database.
-    // TODO: Which users should be read in?
-    //       We probably don't want to have *every* user,
-    //       only the one's who are likely to be placing orders.
-    //
-    //       That, or we can read and maintain users as they request info.
     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
 
     println!("Connected to database.");
-    // println!("Getting users.");
-
-    // Gets all users, reads in their pending orders, and sets total # users
-    // users.populate_users_from_db(&mut client);
 
     // Reads total # users
     users.direct_update_total(&mut client);

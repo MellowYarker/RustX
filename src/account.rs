@@ -32,7 +32,6 @@ pub struct UserAccount {
 impl UserAccount {
     pub fn from(username: &String, password: &String) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        // let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.clone(),
             password: password.clone(),
@@ -44,7 +43,6 @@ impl UserAccount {
     /* Used when reading values from database.*/
     pub fn direct(id: i32, username: &str, password: &str) -> Self {
         let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
-        // let trades: Vec<Trade> = Vec::new();
         UserAccount {
             username: username.to_string().clone(),
             password: password.to_string().clone(),
@@ -170,33 +168,6 @@ impl Users {
             id_map: id_map,
             total: 0
         }
-    }
-
-    /* TODO:
-     *  I want this to be part of the database.rs file,
-     *  the only thing keeping me from doing that is we
-     *  call cache_user(), which I want to keep private.
-     *
-     * Insert a user to program cache from the database,
-     * and updates the count of users.
-     */
-    pub fn populate_users_from_db(&mut self, conn: &mut Client) {
-        for row in conn.query("SELECT id, username, password FROM Account;", &[])
-            .expect("Something went wrong while trying to query the database for all users.") {
-            let id: i32 = row.get(0);
-            let username: &str = row.get(1);
-            let password: &str = row.get(2);
-
-            let account = UserAccount::direct(id, username, password);
-            self.cache_user(account);
-
-            let authenticated = true;
-            if let Ok(account) = self.get_mut(&username.to_string(), authenticated) {
-                database::read_account_pending_orders(account, conn);
-            }
-        }
-
-        self.direct_update_total(conn);
     }
 
     /* Update the total user count. */
