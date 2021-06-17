@@ -2,7 +2,7 @@ CREATE TABLE Account (
     ID              int,
     username        varchar(15) NOT NULL,
     password        varchar(20) NOT NULL,
-    register_time   date,
+    register_time   TIMESTAMP WITH TIME ZONE,
     PRIMARY KEY(ID)
 );
 
@@ -15,8 +15,8 @@ CREATE TABLE Orders (
     price           float8,
     user_ID         int,
     status          varchar(9) NOT NULL,
-    time_placed     date,
-    time_updated    date,
+    time_placed     TIMESTAMP WITH TIME ZONE,
+    time_updated    TIMESTAMP WITH TIME ZONE,
     PRIMARY KEY(order_ID),
     FOREIGN KEY(user_ID)
         REFERENCES Account(ID)
@@ -39,7 +39,7 @@ CREATE TABLE ExecutedTrades (
     filler_OID      int,
     filler_UID      int,
     exchanged       int,
-    execution_time  date,
+    execution_time  TIMESTAMP WITH TIME ZONE,
     -- Will never have 2+ trades with the same
     -- (filled, filler) order id pair
     PRIMARY KEY(filled_OID, filler_OID),

@@ -1,4 +1,5 @@
 #[macro_use] extern crate random_number;
+extern crate chrono;
 
 pub mod exchange;
 pub mod parser;
