@@ -1,4 +1,4 @@
-pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError};
+pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError, OrderStatus};
 pub use crate::print_instructions;
 use postgres::Client;
 use crate::database;
@@ -98,8 +98,9 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                                          words[1].to_string().to_uppercase(),
                                          words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),// TODO we shouldn't panic here
                                          words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),     // TODO we shouldn't panic here
+                                         OrderStatus::PENDING,
                                          None
-                                        );
+                                       );
                 if order.quantity <= 0 || order.price <= 0.0 {
                     eprintln!("Malformed \"{}\" request!", words[0]);
                     eprintln!("Make sure the quantity and price are greater than 0!");

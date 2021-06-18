@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 // IO stuff
 use std::io::prelude::*;
 
-use crate::exchange::{Exchange, Market, Order, SecStat, Trade, UserAccount};
+use crate::exchange::{Exchange, Market, Order, SecStat, Trade, UserAccount, OrderStatus};
 use crate::account::AuthError;
 
 /* ---- Specification for the db API ----
@@ -126,9 +126,10 @@ ORDER BY (o.symbol, o.action)", &[]).expect("Something went wrong in the query."
         let filled: i32 = row.get(4);
         let price: f64 = row.get(5);
         let user_id: i32 = row.get(6);
+        // No need to get status, it's obviously pending.
         // let status: &str = row.get(7);
 
-        let order = Order::direct(action, symbol, quantity, filled, price, order_id, user_id);
+        let order = Order::direct(action, symbol, quantity, filled, price, order_id, OrderStatus::PENDING, user_id);
         // Add the order we found to the market.
         // If a new market was created, update the exchange.
         if let Some(market) = direct_insert_to_market(exchange.live_orders.get_mut(&order.symbol), &order) {
@@ -349,6 +350,7 @@ ORDER BY o.order_ID;";
                                   filled,
                                   price,
                                   order_id,
+                                  OrderStatus::PENDING,
                                   user_id);
         let market = user.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
         market.insert(order.order_id, order);
@@ -491,12 +493,23 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
     let status: &str;
     let mut add_to_pending = false;
 
+    match order.status {
+        OrderStatus::COMPLETE => status = "COMPLETE",
+        OrderStatus::PENDING => {
+            status = "PENDING";
+            add_to_pending = true;
+        },
+        OrderStatus::CANCELLED => panic!("Got unexpected orderstatus for newly placed order!")
+    }
+
+    /*
     if order.quantity == order.filled {
         status = "COMPLETE";
     } else {
         status = "PENDING";
         add_to_pending = true;
     }
+    */
 
     // TODO: Eventually lets specify the timezone
     let now = Local::now();
@@ -653,7 +666,7 @@ pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn
  *      I could move the Orders table UPDATE to write_update_filled_counts,
  *      but I think it's important to atomically update both tables in this case.
  **/
-pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: &str) {
+pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: OrderStatus) {
 
     // TODO: Eventually lets specify the timezone.
     let now = Local::now();
@@ -661,13 +674,13 @@ pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_
     // TODO: We can run this all in parallel!
     // Determine if order completed or cancelled
     let filled: &str;
-    if let "COMPLETE" = set_status {
+    if let OrderStatus::COMPLETE = set_status {
         filled = "quantity";
     } else {
         filled = "filled";
     }
     let mut delete_query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN (");
-    let mut update_query_string = format!["UPDATE Orders SET status='{}', filled={}, time_updated='{}' WHERE order_id IN (", set_status, filled, now];
+    let mut update_query_string = format!["UPDATE Orders SET status='{:?}', filled={}, time_updated='{}' WHERE order_id IN (", set_status, filled, now];
 
     for order in order_ids.iter() {
         delete_query_string.push_str(format!["{}, ", order].as_str());

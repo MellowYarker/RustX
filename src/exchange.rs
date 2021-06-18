@@ -2,7 +2,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
 pub mod requests;
-pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation};
+pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation, OrderStatus};
 
 pub mod filled;
 pub use crate::exchange::filled::Trade;
@@ -326,7 +326,12 @@ impl Exchange {
                     // TODO: Do we want to update market stats? total_cancelled maybe?
                     let mut to_remove = Vec::new();
                     to_remove.push(order_to_cancel.order_id);
-                    database::write_delete_pending_orders(&to_remove, conn, "CANCELLED");
+                    // TODO: PER-5
+                    //      We're cancelling this order, so we should set the status in the DIFF buffer
+                    //      to CANCELLED. Note that any trades that occured between the previous DB
+                    //      write and the order cancellation will be stored in the trades buffer (i.e
+                    //      no data loss).
+                    database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED);
 
 
                     return Ok(());
@@ -419,7 +424,7 @@ impl Exchange {
 
             if let Ok(account) =  users.authenticate(username, &"password".to_string(), conn) {
                 // Create the order and send it to the market
-                let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, account.id);
+                let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
                 if account.validate_order(&order) {
                     if let Err(e) = self.submit_order_to_market(users, order, username, true, conn) {
                         eprintln!("{}", e);
