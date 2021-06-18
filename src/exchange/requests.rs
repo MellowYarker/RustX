@@ -1,5 +1,14 @@
 use std::cmp::Ordering;
 use crate::account::UserAccount;
+
+// The status of an order, each is 1 byte (u8)
+#[derive(Copy, Clone, Debug)]
+pub enum OrderStatus {
+    PENDING,
+    COMPLETE,
+    CANCELLED
+}
+
 // An order type for a security
 #[derive(Debug)]
 pub struct Order {
@@ -9,12 +18,13 @@ pub struct Order {
     pub filled: i32,        // Quantity filled so far
     pub price: f64,
     pub order_id: i32,
+    pub status: OrderStatus,
     pub user_id: Option<i32>// user ID of user who placed order, starts as None during tokenization.
 }
 
 impl Order {
     // Used when reading a user from the frontend
-    pub fn from(action: String, symbol: String, quantity: i32, price: f64, user_id: Option<i32>) -> Self {
+    pub fn from(action: String, symbol: String, quantity: i32, price: f64, status: OrderStatus, user_id: Option<i32>) -> Self {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
 
@@ -25,12 +35,13 @@ impl Order {
             filled: 0,
             price,
             order_id: 0, // Updated later.
+            status,
             user_id
         }
     }
 
     // Used when reading an existing user from the database
-    pub fn direct(action: &str, symbol: &str, quantity: i32, filled: i32, price: f64, order_id: i32, user_id: i32) -> Self {
+    pub fn direct(action: &str, symbol: &str, quantity: i32, filled: i32, price: f64, order_id: i32, status: OrderStatus, user_id: i32) -> Self {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
 
@@ -42,6 +53,7 @@ impl Order {
             filled,
             price,
             order_id,
+            status,
             user_id: Some(user_id)
         }
     }
