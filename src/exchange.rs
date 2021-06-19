@@ -15,8 +15,9 @@ pub use crate::exchange::market::Market;
 
 pub use crate::account::{UserAccount, Users};
 
-// pub mod database;
 pub use crate::database;
+
+pub use crate::buffer::BufferCollection;
 
 use postgres::Client;
 
@@ -54,7 +55,7 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
 
@@ -76,7 +77,7 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(trades) = executed_trades {
+        if let Some(mut trades) = executed_trades {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
             // Updates in-mem data
@@ -95,7 +96,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(&trades, conn);
+            users.update_account_orders(&mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -197,7 +198,7 @@ impl Exchange {
      *
      * Returns the new price if trade occurred, otherwise, None or errors.
     */
-    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool, conn: &mut Client) -> Result<Option<f64>, String> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, buffers: &mut BufferCollection, order: Order, username: &String, auth: bool, conn: &mut Client) -> Result<Option<f64>, String> {
 
         // Mutable reference to the account associated with given username.
         let account = match users.get_mut(username, auth) {
@@ -237,8 +238,10 @@ impl Exchange {
                     let current_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                     current_market.insert(order.order_id, order.clone());
                 }
+                // TODO: Write the new order to the orders buffer!
+                buffers.buffered_orders.add_unknown_to_order_buffer(&order);
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, trades, conn);
+                new_price = self.update_state(&order, users, buffers, trades, conn);
             },
             // The market doesn't exist, create it if found in DB,
             // otherwise the user entered a market that DNE.
@@ -268,8 +271,10 @@ impl Exchange {
                     let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                     new_account_market.insert(order.order_id, order.clone());
 
+                    // TODO: Write the new order to the orders buffer!
+                    buffers.buffered_orders.add_unknown_to_order_buffer(&order);
                     // Since this is the first order, initialize the stats for this security.
-                    new_price = self.update_state(&order, users, None, conn);
+                    new_price = self.update_state(&order, users, buffers, None, conn);
                 } else {
                     return Err(format!["The market ${} was not found in the database. User error!", order.symbol]);
                 }
@@ -288,7 +293,7 @@ impl Exchange {
      *       whatever *remains* of an order, i.e any fulfilled portion
      *       cannot be cancelled.
      * */
-    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, conn: &mut Client) -> Result<(), String>{
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) -> Result<(), String>{
         if let Ok(account) = users.get(&(order_to_cancel.username), true) {
             // 1. Ensure the order belongs to the user
             if let Some(action) = account.user_placed_pending_order(&order_to_cancel.symbol, order_to_cancel.order_id, conn) {
@@ -331,6 +336,8 @@ impl Exchange {
                     //      to CANCELLED. Note that any trades that occured between the previous DB
                     //      write and the order cancellation will be stored in the trades buffer (i.e
                     //      no data loss).
+                    let order = Order::from_cancelled(order_to_cancel.order_id);
+                    buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, false); // PER-5 update
                     database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED);
 
 
@@ -355,7 +362,7 @@ impl Exchange {
      *      - Maybe simulate individual markets? (This was old behaviour)
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
-    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, conn: &mut Client) {
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
 
         let buy = String::from("BUY");
         let sell = String::from("SELL");
@@ -426,7 +433,7 @@ impl Exchange {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
                 if account.validate_order(&order) {
-                    if let Err(e) = self.submit_order_to_market(users, order, username, true, conn) {
+                    if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
                         eprintln!("{}", e);
                     }
                 }
