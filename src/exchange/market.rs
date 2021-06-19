@@ -1,6 +1,6 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use crate::exchange::{Order, Trade};
+use crate::exchange::{Order, Trade, OrderStatus};
 
 // The market for a security
 #[derive(Debug)]
@@ -33,6 +33,7 @@ impl Market {
         loop {
             // The new buy order was filled.
             if highest_bid.quantity == highest_bid.filled {
+                highest_bid.status = OrderStatus::COMPLETE;
                 break;
             }
 
@@ -98,6 +99,7 @@ impl Market {
         loop {
             // The new sell order was filled.
             if lowest_offer.quantity == lowest_offer.filled {
+                lowest_offer.status = OrderStatus::COMPLETE;
                 break;
             }
 
