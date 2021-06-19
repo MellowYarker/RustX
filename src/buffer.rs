@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::collections::hash_map::Iter;
+use std::collections::hash_map;
+use std::vec;
 use std::convert::TryInto;
 
 use chrono::{Local, DateTime};
@@ -175,8 +176,8 @@ impl OrderBuffer {
     }
 
     /* Gives us access to the internal data buffer. */
-    pub fn to_iter(&self) -> Iter<'_, i32, DatabaseReadyOrder> {
-        self.data.iter()
+    pub fn drain_buffer(&mut self) -> hash_map::Drain<'_, i32, DatabaseReadyOrder> {
+        self.data.drain()
     }
 
     /* We want to empty the buffer before it's close to
@@ -222,6 +223,42 @@ pub struct TradeBuffer {
     // TODO: We also need to include execution_time!
     //       Should we add that to the Trade struct, or append it some other way?
     data: Vec<Trade> // A simple vector that stores the trades in the order they occur.
+}
+
+impl TradeBuffer {
+
+    pub fn new(capacity: u32) -> Self {
+        let data: Vec<Trade> = Vec::with_capacity(capacity.try_into().unwrap());
+        TradeBuffer {
+            data
+        }
+    }
+
+    /* We want to empty the buffer before it's close to
+     * being completely full. This prevents us from
+     * dealing with a situation where the buffer gets
+     * full in the middle of processing an order.
+     **/
+    pub fn check_space_remaining(&self) -> bool {
+        // If we've used 90% or more of the buffer, return false.
+        let used: f64 = self.data.len() as f64;
+        let max : f64 = self.data.capacity() as f64;
+        return (used / max) < 0.9;
+    }
+
+    /* Call this when we want to consume the buffer and write it to the database. */
+    pub fn drain_buffer(&mut self) -> vec::Drain<'_, Trade> {
+        self.data.drain(..)
+    }
+
+    pub fn add_trade_to_buffer(&mut self, trade: Trade) {
+        self.data.push(trade);
+    }
+
+    /* This will consume the trades vector. */
+    pub fn add_trades_to_buffer(&mut self, trades: &mut Vec<Trade>) {
+        self.data.append(trades);
+    }
 }
 
 pub struct BufferCollection {
