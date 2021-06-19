@@ -57,6 +57,22 @@ impl Order {
             user_id: Some(user_id)
         }
     }
+
+    /* This constructs a mostly empty order. We only ever use it when cancelling an order,
+     * as we need to modify the orders state in the order buffer.
+     **/
+    pub fn from_cancelled(order_id: i32) -> Self {
+        Order {
+            action: "".to_string(),
+            symbol: "".to_string(),
+            quantity: 0,
+            filled: 0,
+            price: 0.0,
+            order_id,
+            status: OrderStatus::CANCELLED,
+            user_id: None,
+        }
+    }
 }
 
 impl Clone for Order {
