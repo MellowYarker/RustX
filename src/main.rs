@@ -4,10 +4,12 @@ extern crate chrono;
 pub mod exchange;
 pub mod parser;
 pub mod account;
+pub mod buffer;
 pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
+pub use crate::buffer::BufferCollection;
 
 use std::env;
 use std::process;

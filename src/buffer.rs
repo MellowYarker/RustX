@@ -1,3 +1,12 @@
+use std::collections::HashMap;
+use std::collections::hash_map::Iter;
+use std::convert::TryInto;
+
+use chrono::{Local, DateTime};
+
+use crate::exchange::{OrderStatus, Trade, Order};
+
+
 // TODO: We want several data structures, maybe inside one "Buffer" struct
 //       where we can store:
 //       1. Orders as follows
@@ -55,3 +64,167 @@
 //      2. Latency of writing to the database.
 //      3. Ability to write to DB by moving buffer to another thread and continuing normal
 //         operations (in this case, we could have a very large buffer).
+
+/* This struct represents an order that is ready to be written to the database.
+ * We make the following distinction between known, and unknown orders:
+ *
+ *  Known Orders are orders that are known to the database, they have already been written to disk before.
+ *      -   If a known order is to be updated, the only fields that might have Some(val) are
+ *          filled, status, and update_time.
+ *
+ *  Unknown Orders are orders that are not known to the database, they have been placed for the
+ *  first time.
+ *      -   Unknown orders are to be *inserted*, and ALL of their fields will have values,
+ *          excluding potentially time_updated.
+ * */
+pub struct DatabaseReadyOrder {
+    action:       Option<String>,
+    symbol:       Option<String>,
+    quantity:     Option<i32>,
+    filled:       Option<i32>,
+    price:        Option<f64>,
+    order_id:     Option<i32>,
+    status:       Option<OrderStatus>,
+    user_id:      Option<i32>,
+    time_placed:  Option<DateTime<Local>>,
+    time_updated: Option<DateTime<Local>>,
+}
+
+impl DatabaseReadyOrder {
+
+    fn new() -> Self {
+        DatabaseReadyOrder {
+            action:       None,
+            symbol:       None,
+            quantity:     None,
+            filled:       None,
+            price:        None,
+            order_id:     None,
+            status:       None,
+            user_id:      None,
+            time_placed:  None,
+            time_updated: None,
+        }
+    }
+
+    /* Creates an order ready to be inserted to the database.
+     * Note that we take the current time for time_placed.
+     **/
+    fn prepare_new_order(order: &Order) -> Self {
+        DatabaseReadyOrder {
+            action: Some(order.action.clone()),
+            symbol: Some(order.symbol.clone()),
+            quantity: Some(order.quantity),
+            filled: Some(order.filled),
+            price: Some(order.price),
+            order_id: Some(order.order_id),
+            status: Some(order.status),
+            user_id: order.user_id,
+            time_placed:  Some(Local::now()),
+            time_updated: None,
+        }
+    }
+
+    /* Update the DatabaseReadyOrder given the current order's state. */
+    fn update_ready_order(&mut self, order: &Order, update_filled: bool) {
+
+        if update_filled {
+            self.filled = Some(order.filled);
+        }
+
+        match order.status {
+            // We only store pending orders (excluding buffers),
+            // so DB would know about pending (i.e ignore it).
+            OrderStatus::PENDING => (),
+            OrderStatus::COMPLETE | OrderStatus::CANCELLED => self.status = Some(order.status)
+        }
+
+        self.time_updated = Some(Local::now());
+    }
+
+    fn update_filled(&mut self, new_filled: i32) {
+        self.filled = Some(new_filled);
+    }
+
+    fn update_status(&mut self, new_status: OrderStatus) {
+        self.status = Some(new_status);
+    }
+
+    fn update_time_updated(&mut self) {
+        self.time_updated = Some(Local::now());
+    }
+}
+
+// TODO: What do we do if to fulfill an order, we have to go over the buffer's capacity?
+//       a) Empty the buffer well before it's at < 100% capacity
+//       b) Empty the buffer the moment we hit 100%, potentially stalling the main thread
+//       c) Increase the capacity of the buffer temporarily?
+pub struct OrderBuffer {
+    data: HashMap<i32, DatabaseReadyOrder>
+}
+
+impl OrderBuffer {
+
+    /* TODO: Mess around with this.
+     * Capacity is the number of Orders we want to store in the buffer. */
+    pub fn new(capacity: u32) -> Self {
+        let data: HashMap<i32, DatabaseReadyOrder> = HashMap::with_capacity(capacity.try_into().unwrap());
+        OrderBuffer {
+            data
+        }
+    }
+
+    /* Gives us access to the internal data buffer. */
+    pub fn to_iter(&self) -> Iter<'_, i32, DatabaseReadyOrder> {
+        self.data.iter()
+    }
+
+    /* We want to empty the buffer before it's close to
+     * being completely full. This prevents us from
+     * dealing with a situation where the buffer gets
+     * full in the middle of processing an order.
+     **/
+    pub fn check_space_remaining(&self) -> bool {
+        // If we've used 90% or more of the buffer, return false.
+        let used: f64 = self.data.len() as f64;
+        let max : f64 = self.data.capacity() as f64;
+        return (used / max) < 0.9;
+    }
+
+    /* Note that "unknown" doesn't mean unknown to the buffer.
+     * Rather, it means the order is unknown to the database.
+     *
+     * This function is meant for newly placed orders.
+     **/
+    pub fn add_unknown_to_order_buffer(&mut self, order: &Order) {
+        match self.data.insert(order.order_id, DatabaseReadyOrder::prepare_new_order(order)) {
+            Some(_) => {
+                panic!("\
+    Order added to OrderBuffer was already stored in OrderBuffer!\
+    Find where add_unknown_to_order_buffer is called, and make sure to only add newly submitted orders!")
+            },
+            None => ()
+        }
+    }
+
+    /* If we're calling this function, the order has clearly been updated, and since we store
+     * status in the order now, we can clearly check if an order's status is changed from
+     * pending.
+     **/
+    pub fn add_or_update_entry_in_order_buffer(&mut self, order: &Order, update_filled: bool) {
+        let entry = self.data.entry(order.order_id).or_insert(DatabaseReadyOrder::new());
+        entry.update_ready_order(order, update_filled);
+    }
+
+}
+
+pub struct TradeBuffer {
+    // TODO: We also need to include execution_time!
+    //       Should we add that to the Trade struct, or append it some other way?
+    data: Vec<Trade> // A simple vector that stores the trades in the order they occur.
+}
+
+pub struct BufferCollection {
+    pub buffered_orders: OrderBuffer, // where we temporarily store order updates that will be inserted/updated to the DB.
+    pub buffered_trades: TradeBuffer  // where we temporarily store trades that will be inserted in the DB
+}
