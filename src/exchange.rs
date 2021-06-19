@@ -438,6 +438,7 @@ impl Exchange {
                     }
                 }
             }
+            buffers.update_buffer_states();
         }
 
         // If you want prints of each users account, uncomment this.
