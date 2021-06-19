@@ -78,6 +78,7 @@ use crate::exchange::{OrderStatus, Trade, Order};
  *      -   Unknown orders are to be *inserted*, and ALL of their fields will have values,
  *          excluding potentially time_updated.
  * */
+#[derive(Debug)]
 pub struct DatabaseReadyOrder {
     action:       Option<String>,
     symbol:       Option<String>,
@@ -156,12 +157,21 @@ impl DatabaseReadyOrder {
     }
 }
 
+#[derive(Debug)]
+pub enum BufferState {
+    EMPTY,
+    NONEMPTY,
+    FULL
+}
+
 // TODO: What do we do if to fulfill an order, we have to go over the buffer's capacity?
 //       a) Empty the buffer well before it's at < 100% capacity
 //       b) Empty the buffer the moment we hit 100%, potentially stalling the main thread
 //       c) Increase the capacity of the buffer temporarily?
+#[derive(Debug)]
 pub struct OrderBuffer {
-    data: HashMap<i32, DatabaseReadyOrder>
+    data: HashMap<i32, DatabaseReadyOrder>,
+    state: BufferState
 }
 
 impl OrderBuffer {
@@ -170,13 +180,21 @@ impl OrderBuffer {
      * Capacity is the number of Orders we want to store in the buffer. */
     pub fn new(capacity: u32) -> Self {
         let data: HashMap<i32, DatabaseReadyOrder> = HashMap::with_capacity(capacity.try_into().unwrap());
+        let state = BufferState::EMPTY;
         OrderBuffer {
-            data
+            data,
+            state
         }
     }
 
     /* Gives us access to the internal data buffer. */
     pub fn drain_buffer(&mut self) -> hash_map::Drain<'_, i32, DatabaseReadyOrder> {
+        match self.state {
+            BufferState::EMPTY => eprintln!("The buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => eprintln!("The buffer is not full, we can wait before draining."),
+            BufferState::FULL => ()
+        }
+        self.state = BufferState::EMPTY;
         self.data.drain()
     }
 
@@ -185,11 +203,13 @@ impl OrderBuffer {
      * dealing with a situation where the buffer gets
      * full in the middle of processing an order.
      **/
-    pub fn check_space_remaining(&self) -> bool {
-        // If we've used 90% or more of the buffer, return false.
+    pub fn update_space_remaining(&mut self) {
+        // If we've used 90% or more of the buffer, update the state.
         let used: f64 = self.data.len() as f64;
         let max : f64 = self.data.capacity() as f64;
-        return (used / max) < 0.9;
+        if 0.9 < (used / max) {
+            self.state = BufferState::FULL;
+        }
     }
 
     /* Note that "unknown" doesn't mean unknown to the buffer.
@@ -198,6 +218,12 @@ impl OrderBuffer {
      * This function is meant for newly placed orders.
      **/
     pub fn add_unknown_to_order_buffer(&mut self, order: &Order) {
+        match self.state {
+            BufferState::FULL => panic!("Attempting to write an unknown order to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
+
         match self.data.insert(order.order_id, DatabaseReadyOrder::prepare_new_order(order)) {
             Some(_) => {
                 panic!("\
@@ -213,24 +239,33 @@ impl OrderBuffer {
      * pending.
      **/
     pub fn add_or_update_entry_in_order_buffer(&mut self, order: &Order, update_filled: bool) {
+        // TODO: we should use vacant/occupied, then on vacant, check buffer state for FULL.
         let entry = self.data.entry(order.order_id).or_insert(DatabaseReadyOrder::new());
         entry.update_ready_order(order, update_filled);
+
+        if let BufferState::EMPTY = self.state {
+            self.state = BufferState::NONEMPTY;
+        }
     }
 
 }
 
+#[derive(Debug)]
 pub struct TradeBuffer {
     // TODO: We also need to include execution_time!
     //       Should we add that to the Trade struct, or append it some other way?
-    data: Vec<Trade> // A simple vector that stores the trades in the order they occur.
+    data: Vec<Trade>, // A simple vector that stores the trades in the order they occur.
+    state: BufferState
 }
 
 impl TradeBuffer {
 
     pub fn new(capacity: u32) -> Self {
         let data: Vec<Trade> = Vec::with_capacity(capacity.try_into().unwrap());
+        let state = BufferState::EMPTY;
         TradeBuffer {
-            data
+            data,
+            state
         }
     }
 
@@ -239,29 +274,81 @@ impl TradeBuffer {
      * dealing with a situation where the buffer gets
      * full in the middle of processing an order.
      **/
-    pub fn check_space_remaining(&self) -> bool {
-        // If we've used 90% or more of the buffer, return false.
+    pub fn update_space_remaining(&mut self) {
+        // If we've used 90% or more of the buffer, update the state.
         let used: f64 = self.data.len() as f64;
         let max : f64 = self.data.capacity() as f64;
-        return (used / max) < 0.9;
+        if 0.9 < (used / max) {
+            self.state = BufferState::FULL;
+        }
     }
 
     /* Call this when we want to consume the buffer and write it to the database. */
     pub fn drain_buffer(&mut self) -> vec::Drain<'_, Trade> {
+        match self.state {
+            BufferState::EMPTY => eprintln!("The buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => eprintln!("The buffer is not full, we can wait before draining."),
+            BufferState::FULL => ()
+        }
+        self.state = BufferState::EMPTY;
         self.data.drain(..)
     }
 
     pub fn add_trade_to_buffer(&mut self, trade: Trade) {
+        match self.state {
+            BufferState::FULL => panic!("Attempting to write a trade to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
         self.data.push(trade);
     }
 
     /* This will consume the trades vector. */
     pub fn add_trades_to_buffer(&mut self, trades: &mut Vec<Trade>) {
+        match self.state {
+            BufferState::FULL => panic!("Attempting to write several trades to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
         self.data.append(trades);
     }
 }
 
+#[derive(Debug)]
 pub struct BufferCollection {
     pub buffered_orders: OrderBuffer, // where we temporarily store order updates that will be inserted/updated to the DB.
     pub buffered_trades: TradeBuffer  // where we temporarily store trades that will be inserted in the DB
+}
+
+impl BufferCollection {
+    pub fn new(order_buffer_cap: u32, trade_buffer_cap: u32) -> Self {
+        let buffered_orders: OrderBuffer = OrderBuffer::new(order_buffer_cap);
+        let buffered_trades: TradeBuffer = TradeBuffer::new(trade_buffer_cap);
+
+        BufferCollection {
+            buffered_orders,
+            buffered_trades
+        }
+    }
+
+    // TODO:
+    //  Check the remaining space of our buffers.
+    //  We should probably return a struct that informs the caller
+    //  whether 1 or more buffers are full.
+    pub fn update_buffer_states(&mut self) {
+        self.buffered_orders.update_space_remaining();
+        self.buffered_trades.update_space_remaining();
+
+        if let BufferState::FULL = self.buffered_orders.state {
+            // TODO: must drain orders buffer!
+            eprintln!("WARNING: order buffer is full. Write to the database!");
+            self.buffered_orders.drain_buffer();
+        };
+
+        if let BufferState::FULL = self.buffered_trades.state {
+            // TODO: must drain trades buffer!
+            eprintln!("WARNING: trade buffer is full. Write to the database!");
+            self.buffered_trades.drain_buffer();
+        };
+    }
 }
