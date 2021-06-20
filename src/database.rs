@@ -1,5 +1,5 @@
 use postgres::Client;
-use chrono::Local;
+use chrono::{Utc, DateTime, FixedOffset};
 
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
@@ -379,7 +379,9 @@ ORDER BY e.filled_OID;";
         let filler_oid: i32  = row.get(5);
         let filler_uid: i32  = row.get(6);
         let exchanged:  i32  = row.get(7);
-        // let exec_time:  date  = row.get(8); // <--- TODO
+        let execution_time:
+            DateTime<FixedOffset>
+                             = row.get(8);
 
         // Switch the action because we were the filler.
         if user.id.unwrap() == filler_uid {
@@ -397,7 +399,8 @@ ORDER BY e.filled_OID;";
                                   filled_uid,
                                   filler_oid,
                                   filler_uid,
-                                  exchanged);
+                                  exchanged,
+                                  execution_time);
         executed_trades.push(trade);
     }
 }
@@ -420,7 +423,10 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
         let filler_oid: i32  = row.get(5);
         let filler_uid: i32  = row.get(6);
         let exchanged:  i32  = row.get(7);
-        // let exec_time: &str = row.get(0);
+        let execution_time:
+            DateTime<FixedOffset>
+                             = row.get(8);
+
         trades.push(Trade::direct(symbol,
                                   action,
                                   price,
@@ -428,7 +434,8 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
                                   filled_uid,
                                   filler_oid,
                                   filler_uid,
-                                  exchanged
+                                  exchanged,
+                                  execution_time
                                  ));
     }
     return Some(trades);
@@ -462,11 +469,9 @@ WHERE p.order_id = $1
 }
 
 /* TODO: Prepared statement.
- * TODO: Insert regsiter_time.
  * Write a new user to the database. */
 pub fn write_insert_new_account(account: &UserAccount, conn: &mut Client) -> Result<(), ()> {
-    // TODO: Eventually lets specify the timezone.
-    let now = Local::now();
+    let now = Utc::now();
 
     let query_string = "INSERT INTO Account (ID, username, password, register_time) VALUES ($1, $2, $3, $4);";
     match conn.execute(query_string, &[&account.id.unwrap(), &account.username, &account.password, &now]) {
@@ -502,17 +507,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
         OrderStatus::CANCELLED => panic!("Got unexpected orderstatus for newly placed order!")
     }
 
-    /*
-    if order.quantity == order.filled {
-        status = "COMPLETE";
-    } else {
-        status = "PENDING";
-        add_to_pending = true;
-    }
-    */
-
-    // TODO: Eventually lets specify the timezone
-    let now = Local::now();
+    let now = Utc::now();
 
     if let Err(e) = transaction.execute(query_string, &[ &order.order_id,
                                                 &order.symbol,
@@ -523,7 +518,6 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
                                                 &order.user_id,
                                                 &status.to_string(),
                                                 &now
-                                                // None  TODO time_updated
     ]) {
         eprintln!("{:?}", e);
         panic!("Something went wrong with the Order Insert query!");
@@ -591,8 +585,7 @@ WHERE Markets.symbol = $6;";
 /* Inserts the trades in the vector into ExecutedTrades table. */
 pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
 
-    // TODO: Eventually lets specify the timezone.
-    let now = Local::now();
+    let now = Utc::now();
 
     let mut query_string = String::from("\
 INSERT INTO ExecutedTrades
@@ -630,8 +623,7 @@ VALUES \n");
  **/
 pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn: &mut Client) {
 
-    // TODO: Eventually lets specify the timezone.
-    let now = Local::now();
+    let now = Utc::now();
 
     let mut query_string = String::new();
     for order in updated_orders {
@@ -668,8 +660,7 @@ pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn
  **/
 pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: OrderStatus) {
 
-    // TODO: Eventually lets specify the timezone.
-    let now = Local::now();
+    let now = Utc::now();
 
     // TODO: We can run this all in parallel!
     // Determine if order completed or cancelled

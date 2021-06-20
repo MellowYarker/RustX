@@ -1,4 +1,4 @@
-pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError, OrderStatus};
+pub use crate::exchange::{self, Exchange, Market, Order, InfoRequest, Simulation, CancelOrder, Request, PriceError, OrderStatus, BufferCollection};
 pub use crate::print_instructions;
 use postgres::Client;
 use crate::database;
@@ -176,7 +176,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, conn: &mut Client) {
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
     match request {
         Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
@@ -187,7 +187,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
                             if account.validate_order(&order) {
-                                if let Err(e) =  &exchange.submit_order_to_market(users, order.clone(), &username, true, conn) {
+                                if let Err(e) =  &exchange.submit_order_to_market(users, buffers, order.clone(), &username, true, conn) {
                                     eprintln!("{}", e);
                                 } else {
                                     &exchange.show_market(&order.symbol);
@@ -206,7 +206,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::CancelReq(order_to_cancel, password) => {
             match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
-                    match exchange.cancel_order(&order_to_cancel, users, conn) {
+                    match exchange.cancel_order(&order_to_cancel, users, buffers, conn) {
                         Ok(_) => println!("Order successfully cancelled."),
                         Err(e) => eprintln!("{}", e)
                     }
@@ -290,7 +290,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             match &req.action[..] {
                 "simulate" => {
                     println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
-                    &exchange.simulate_market(&req, users, conn);
+                    &exchange.simulate_market(&req, users, buffers, conn);
                 },
                 _ => {
                     eprintln!("I don't know how to handle this Simulation request.");

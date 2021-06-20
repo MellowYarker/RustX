@@ -4,10 +4,12 @@ extern crate chrono;
 pub mod exchange;
 pub mod parser;
 pub mod account;
+pub mod buffer;
 pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
+pub use crate::buffer::BufferCollection;
 
 use std::env;
 use std::process;
@@ -16,8 +18,9 @@ use std::io::{self, prelude::*};
 use postgres::{Client, NoTls};
 
 fn main() {
-    let mut exchange: Exchange = Exchange::new();   // Our central exchange, everything happens here.
-    let mut users: Users = Users::new();            // All our users are stored here.
+    let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
+    let mut users    = Users::new();     // All our users are stored here.
+    let mut buffers  = BufferCollection::new(20000, 20000); // In-memory buffers that will write to DB.
 
     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
@@ -70,10 +73,14 @@ fn main() {
                     // Our input has been validated, and we can now
                     // attempt to service the request.
                     println!("Servicing Request: {}", raw);
-                    parser::service_request(request, &mut exchange, &mut users, &mut client);
+                    parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
                 },
                 Err(_) => return
             }
+
+            // Make sure our buffer states are accurate.
+            println!("{:?}", buffers);
+            buffers.update_buffer_states();
         }
     } else {
         // User interface version
@@ -102,7 +109,11 @@ fn main() {
 
             // Our input has been validated, and we can now
             // attempt to service the request.
-            parser::service_request(request, &mut exchange, &mut users, &mut client);
+            parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+
+            // Make sure our buffer states are accurate.
+            println!("{:?}", buffers);
+            buffers.update_buffer_states();
         }
     }
 }

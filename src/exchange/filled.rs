@@ -1,4 +1,5 @@
 use crate::exchange::Order;
+use chrono::{DateTime, FixedOffset, Utc};
 
 /* Note that a trade does not indicate a full order was processed!
  * It may have only filled part of an order.
@@ -12,7 +13,8 @@ pub struct Trade {
     pub filled_uid: i32,    // ID of user who placed the order that is being filled
     pub filler_oid: i32,    // ID of new order that triggered the trade
     pub filler_uid: i32,    // ID of user who placed new order that triggered the trade
-    pub exchanged: i32      // the amount of shares exchanged
+    pub exchanged: i32,     // the amount of shares exchanged
+    pub execution_time: DateTime<Utc>
 }
 
 impl Trade {
@@ -25,7 +27,8 @@ impl Trade {
             filled_uid,
             filler_oid,
             filler_uid,
-            exchanged
+            exchanged,
+            execution_time: Utc::now()
         }
     }
 
@@ -35,7 +38,7 @@ impl Trade {
     }
 
     /* Used when reading data directly from the database. */
-    pub fn direct(symbol: &str, action: &str, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32) -> Self {
+    pub fn direct(symbol: &str, action: &str, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32, execution_time: DateTime<FixedOffset>) -> Self {
         Trade {
             symbol: symbol.to_string().clone(),
             action: action.to_string().clone(),
@@ -44,7 +47,8 @@ impl Trade {
             filled_uid,
             filler_oid,
             filler_uid,
-            exchanged
+            exchanged,
+            execution_time: execution_time.with_timezone(&Utc)
         }
     }
 }

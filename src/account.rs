@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use postgres::{Client, NoTls};
 use crate::database;
 
+use crate::buffer::BufferCollection;
+
 // Error types for authentication
 pub enum AuthError<'a> {
     NoUser(&'a String), // Username
@@ -175,7 +177,11 @@ impl Users {
         self.total = database::read_total_accounts(conn);
     }
 
-    /* If an account with this username exists, do nothing, otherwise
+    /* TODO: Some later PR, PER-6/7? We might want to buffer new accounts?
+     *       If not, we could consider running this computation in a separate thread?
+     *       (Although, adding a new user to the cache could be tricky... need concurrent hashmap
+     *       and I'm not sure it's reasonable to want that yet.)
+     * If an account with this username exists, do nothing, otherwise
      * add the account and return it's ID.
      */
     pub fn new_account(&mut self, account: UserAccount, conn: &mut Client) -> Option<i32> {
@@ -319,7 +325,14 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
-    /* For internal use only.
+    /* TODO: Some later PR. PER-6?
+     *       Since we're decreasing DB operations, we actually *do* want to cache this
+     *       user. The reasoning is simple: we have to trust the program state at all times.
+     *       If the user isn't cached (their orders too) AND any updates to their
+     *       orders are stored in the temp buffer but not the db or program data structures,
+     *       then there's no way for us to know about the state of the users account.
+     *
+     * For internal use only.
      *
      * If the account is in the cache (active user), we return a mutable ref to the user.
      * If the account is in the database, we construct a user, get the pending orders,
@@ -343,7 +356,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         }
     }
 
-    /* Prints the account information of this user if:
+    /* TODO: This is very likley outdated
+     * Prints the account information of this user if:
      *  - the account exists and
      *  - the password is correct for this user
      */
@@ -380,7 +394,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
+    fn update_single_user(&mut self, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -451,20 +465,21 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 Some(order) => {
                     // order completely filled
                     if trade.exchanged == (order.quantity - order.filled) {
-                        // TODO: PER-5
-                        //  This order is being removed from the account,
-                        //  so we should update it in the DIFF buffer (hashmap).
-                        //  Specifically, we should set its filled to quantity, and status to
-                        //  pending.
-                        order.status = OrderStatus::COMPLETE; // TODO this will go into buffer to DB
+
+                        // Add/update this completed order in the database buffer.
+                        order.status = OrderStatus::COMPLETE;
+                        order.filled = order.quantity;
+                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
                         entries_to_remove.push(order.order_id);
                     } else if !is_filler {
                         // Don't update the filler's filled count,
                         // new orders are added to accounts in submit_order_to_market.
-
-                        // TODO: PER-5
-                        //  This order is being updated, we should update the buffer (hashmap) also!
                         order.filled += trade.exchanged;
+
+                        // Add/update this pre-existing pending order to the database buffer.
+                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
                         // Extend the vector of orders we will update
                         update_partial_filled_vec.push((order.filled, order.order_id));
                     }
@@ -482,17 +497,16 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         //      - If we can perform both these updates in parallel, i.e execute the functions in
         //        separate threads, on different DB connections, that might be a good idea!
 
-        // TODO - PER-5
-        //  We don't want to perform this pending delete, or parital update anymore.
-        //  Instead, we will just perform the updates according to what is in the DIFF buffer.
-        //  That is, we want to write to the DIFF buffers instead.
-
+        // TODO - PER-6/7?
+        //        We don't want to write this pending delete to the DB anymore
         // Remove all the completed orders from the database's pending table
         // and update Orders table.
         if entries_to_remove.len() > 0 {
             database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
         }
 
+        // TODO - PER-6/7?
+        //        We don't want to perform this partial order DB update anymore.
         // For each trade that partially filled an order, update `filled` in Orders table.
         database::write_partial_update_filled_counts(&update_partial_filled_vec, conn);
     }
@@ -500,7 +514,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, trades: &Vec<Trade>, conn: &mut Client) {
+    pub fn update_account_orders(&mut self, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
@@ -520,17 +534,18 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(*user_id, new_trades, false, conn);
+            self.update_single_user(buffers, *user_id, new_trades, false, conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(trades[0].filler_uid, &trades, true, conn);
+        self.update_single_user(buffers, trades[0].filler_uid, &trades, true, conn);
 
-        // TODO: PER-5
-        //  Instead of writing this trade insert here, we should be writing to a buffer of trades
-        //  which will be emptied occasionally when full.
-        //
+        // TODO: PER-6/7?
+        //       We don't want to perform this database update anymore.
         // For each trade, insert into ExecutedTrades table.
-        database::write_insert_trades(&trades, conn);
+        database::write_insert_trades(trades, conn);
+
+        // Add this trade to the trades database buffer.
+        buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update
     }
 
     pub fn print_all(&self) {
