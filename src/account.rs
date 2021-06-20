@@ -177,7 +177,11 @@ impl Users {
         self.total = database::read_total_accounts(conn);
     }
 
-    /* If an account with this username exists, do nothing, otherwise
+    /* TODO: Some later PR, PER-6/7? We might want to buffer new accounts?
+     *       If not, we could consider running this computation in a separate thread?
+     *       (Although, adding a new user to the cache could be tricky... need concurrent hashmap
+     *       and I'm not sure it's reasonable to want that yet.)
+     * If an account with this username exists, do nothing, otherwise
      * add the account and return it's ID.
      */
     pub fn new_account(&mut self, account: UserAccount, conn: &mut Client) -> Option<i32> {
@@ -321,7 +325,14 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
-    /* For internal use only.
+    /* TODO: Some later PR. PER-6?
+     *       Since we're decreasing DB operations, we actually *do* want to cache this
+     *       user. The reasoning is simple: we have to trust the program state at all times.
+     *       If the user isn't cached (their orders too) AND any updates to their
+     *       orders are stored in the temp buffer but not the db or program data structures,
+     *       then there's no way for us to know about the state of the users account.
+     *
+     * For internal use only.
      *
      * If the account is in the cache (active user), we return a mutable ref to the user.
      * If the account is in the database, we construct a user, get the pending orders,
@@ -345,7 +356,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         }
     }
 
-    /* Prints the account information of this user if:
+    /* TODO: This is very likley outdated
+     * Prints the account information of this user if:
      *  - the account exists and
      *  - the password is correct for this user
      */

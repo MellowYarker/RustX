@@ -143,18 +143,6 @@ impl DatabaseReadyOrder {
 
         self.time_updated = Some(Local::now());
     }
-
-    fn update_filled(&mut self, new_filled: i32) {
-        self.filled = Some(new_filled);
-    }
-
-    fn update_status(&mut self, new_status: OrderStatus) {
-        self.status = Some(new_status);
-    }
-
-    fn update_time_updated(&mut self) {
-        self.time_updated = Some(Local::now());
-    }
 }
 
 #[derive(Debug)]
