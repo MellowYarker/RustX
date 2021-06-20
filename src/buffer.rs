@@ -8,76 +8,48 @@ use chrono::{Local, DateTime};
 use crate::exchange::{OrderStatus, Trade, Order};
 
 
-// TODO: We want several data structures, maybe inside one "Buffer" struct
-//       where we can store:
-//       1. Orders as follows
-//           {
-//             action: Option<String>,
-//             symbol: Option<String>,
-//             quantity: Option<i32>,
-//             filled: Option<i32>,
-//             price: Option<f64>,
-//             order_id: Option<i32>,
-//             status: Option<OrderStatus>,
-//             user_id: Option<i32>
-//           }
-//
-//          By storing orders in this way, we can represent a NEW order (i.e one the database has
-//          never seen) by having some fields like action or symbol be Some(string). Meanwhile, an
-//          old order would have action, symbol, quantity, price, order_id, user_id all set to None
-//          in our Buffer structure, since the database knows the values already and they do not
-//          change.
-//
-//          Therefore, orders the DB knows about will be stored in the buffer as:
-//           {
-//             action: None,
-//             symbol: None,
-//             quantity: None,
-//             filled: Option<i32>, // Some(i32) if update occured, else None
-//             price: None,
-//             order_id: None,
-//             status: Option<OrderStatus>, // Some(OrderStatus) if update occured, else None
-//             user_id: None
-//           }
-//          This makes it easy for us to determine
-//          a. If we need to to an insert (new order) or update (old order).
-//          b. Which fields need to be updated for an old order.
-//          c. We can differentiate between a complete order, a cancelled order, and a pending
-//          order.
-//
-//      2. Trades can just be stored in a vector. They are always new and unique!
-//      3. New accounts can probably still be inserted immediately
-//      4. The "exchangeStats", i.e max order ID, can just be read straight from the exchange
-//
-//
-//  Ideally, we will spin up some thread whenever we want to perform DB writes so this doesn't
-//  affect program operation. This means we want to move the buffers to the other thread,
-//  essentially draining them in the main thread (not deallocating!).
-//
-//  Somehow, we should run this all in a loop, i.e every n seconds, write the buffer to the DB. Or
-//  instead, once the buffer reaches a certain size (10MB?), write the contents to the DB. It
-//  really depends on:
-//
-//      1. Overall program memory consumption
-//          - If the program is running hot, we will have to decrease the buffer capacity.
-//            However, we can probably control a few things like # users in the cache (evict LRU),
-//            # of pending orders we want to store in each market, etc.
-//      2. Latency of writing to the database.
-//      3. Ability to write to DB by moving buffer to another thread and continuing normal
-//         operations (in this case, we could have a very large buffer).
+/* Just some notes.
+ *
+ *      1. New accounts can probably still be inserted immediately
+ *      2. The "exchangeStats", i.e max order ID, can just be read straight from the exchange
+ *      3. Not sure about Markets just yet... probably just have a field in each market
+ *         that informs us if it has been modified since the last write!
+ *
+ *  Ideally, we will spin up some thread whenever we want to perform DB writes so this doesn't
+ *  affect program operation. This means we want to move the buffers to the other thread,
+ *  essentially draining them in the main thread (not deallocating!).
+ *
+ *  Somehow, we should run this all in a loop, i.e every n seconds, write the buffer to the DB. Or
+ *  instead, once the buffer reaches a certain size (10MB?), write the contents to the DB. It
+ *  really depends on:
+ *
+ *      1. Overall program memory consumption
+ *          - If the program is running hot, we will have to decrease the buffer capacity.
+ *            However, we can probably control a few things like # users in the cache (evict LRU),
+ *            # of pending orders we want to store in each market, etc.
+ *      2. Latency of writing to the database.
+ *      3. Ability to write to DB by moving buffer to another thread and continuing normal
+ *         operations (in this case, we could have a very large buffer).
+ **/
 
 /* This struct represents an order that is ready to be written to the database.
  * We make the following distinction between known, and unknown orders:
  *
- *  Known Orders are orders that are known to the database, they have already been written to disk before.
+ *  Known Orders: orders that are known to the database, they have already been written to disk before.
  *      -   If a known order is to be updated, the only fields that might have Some(val) are
  *          filled, status, and update_time.
+ *      -   If the programs state of a field is the same as the database, we represent it as None here.
  *
- *  Unknown Orders are orders that are not known to the database, they have been placed for the
- *  first time.
+ *  Unknown Orders: orders that are not known to the database, they have been placed for the first time.
  *      -   Unknown orders are to be *inserted*, and ALL of their fields will have values,
  *          excluding potentially time_updated.
- * */
+ *
+ *  The following SQL statements will need to be supported:
+ *      1. Insert to Orders (Unknown Order)
+ *      2. Insert to Pending (Unknown order)
+ *      3. Remove from Pending (Unknown order cancelled/completed)
+ *      4. Update Orders (Known order updated)
+ **/
 #[derive(Debug)]
 pub struct DatabaseReadyOrder {
     action:       Option<String>,
@@ -152,10 +124,6 @@ pub enum BufferState {
     FULL
 }
 
-// TODO: What do we do if to fulfill an order, we have to go over the buffer's capacity?
-//       a) Empty the buffer well before it's at < 100% capacity
-//       b) Empty the buffer the moment we hit 100%, potentially stalling the main thread
-//       c) Increase the capacity of the buffer temporarily?
 #[derive(Debug)]
 pub struct OrderBuffer {
     data: HashMap<i32, DatabaseReadyOrder>,
@@ -240,8 +208,6 @@ impl OrderBuffer {
 
 #[derive(Debug)]
 pub struct TradeBuffer {
-    // TODO: We also need to include execution_time!
-    //       Should we add that to the Trade struct, or append it some other way?
     data: Vec<Trade>, // A simple vector that stores the trades in the order they occur.
     state: BufferState
 }
@@ -319,10 +285,9 @@ impl BufferCollection {
         }
     }
 
-    // TODO:
-    //  Check the remaining space of our buffers.
-    //  We should probably return a struct that informs the caller
-    //  whether 1 or more buffers are full.
+    /* Check our buffer states.
+     * TODO: Eventually, we will write our buffers to the database in here.
+     * */
     pub fn update_buffer_states(&mut self) {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
