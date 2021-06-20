@@ -238,8 +238,10 @@ impl Exchange {
                     let current_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                     current_market.insert(order.order_id, order.clone());
                 }
-                // TODO: Write the new order to the orders buffer!
+
+                // Add this new order to the database buffer
                 buffers.buffered_orders.add_unknown_to_order_buffer(&order);
+
                 // Update the state of the exchange.
                 new_price = self.update_state(&order, users, buffers, trades, conn);
             },
@@ -271,8 +273,9 @@ impl Exchange {
                     let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
                     new_account_market.insert(order.order_id, order.clone());
 
-                    // TODO: Write the new order to the orders buffer!
+                    // Add this new order to the database buffer
                     buffers.buffered_orders.add_unknown_to_order_buffer(&order);
+
                     // Since this is the first order, initialize the stats for this security.
                     new_price = self.update_state(&order, users, buffers, None, conn);
                 } else {
@@ -331,15 +334,14 @@ impl Exchange {
                     // TODO: Do we want to update market stats? total_cancelled maybe?
                     let mut to_remove = Vec::new();
                     to_remove.push(order_to_cancel.order_id);
-                    // TODO: PER-5
-                    //      We're cancelling this order, so we should set the status in the DIFF buffer
-                    //      to CANCELLED. Note that any trades that occured between the previous DB
-                    //      write and the order cancellation will be stored in the trades buffer (i.e
-                    //      no data loss).
+
+                    // Add this cancellation to the database buffer.
                     let order = Order::from_cancelled(order_to_cancel.order_id);
                     buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, false); // PER-5 update
-                    database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED);
 
+                    // TODO: PER-6/7
+                    //       Remove this db write eventually, we just write the buffers.
+                    database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED);
 
                     return Ok(());
 

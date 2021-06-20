@@ -465,23 +465,21 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 Some(order) => {
                     // order completely filled
                     if trade.exchanged == (order.quantity - order.filled) {
-                        // TODO: PER-5
-                        //  This order is being removed from the account,
-                        //  so we should update it in the DIFF buffer (hashmap).
-                        //  Specifically, we should set its filled to quantity, and status to
-                        //  pending.
+
+                        // Add/update this completed order in the database buffer.
                         order.status = OrderStatus::COMPLETE;
                         order.filled = order.quantity;
                         buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
                         entries_to_remove.push(order.order_id);
                     } else if !is_filler {
                         // Don't update the filler's filled count,
                         // new orders are added to accounts in submit_order_to_market.
-
-                        // TODO: PER-5
-                        //  This order is being updated, we should update the buffer (hashmap) also!
                         order.filled += trade.exchanged;
+
+                        // Add/update this pre-existing pending order to the database buffer.
                         buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
                         // Extend the vector of orders we will update
                         update_partial_filled_vec.push((order.filled, order.order_id));
                     }
@@ -499,17 +497,16 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         //      - If we can perform both these updates in parallel, i.e execute the functions in
         //        separate threads, on different DB connections, that might be a good idea!
 
-        // TODO - PER-5
-        //  We don't want to perform this pending delete, or parital update anymore.
-        //  Instead, we will just perform the updates according to what is in the DIFF buffer.
-        //  That is, we want to write to the DIFF buffers instead.
-
+        // TODO - PER-6/7?
+        //        We don't want to write this pending delete to the DB anymore
         // Remove all the completed orders from the database's pending table
         // and update Orders table.
         if entries_to_remove.len() > 0 {
             database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
         }
 
+        // TODO - PER-6/7?
+        //        We don't want to perform this partial order DB update anymore.
         // For each trade that partially filled an order, update `filled` in Orders table.
         database::write_partial_update_filled_counts(&update_partial_filled_vec, conn);
     }
@@ -542,12 +539,12 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 2: update account who placed order that filled others.
         self.update_single_user(buffers, trades[0].filler_uid, &trades, true, conn);
 
-        // TODO: PER-5
-        //  Instead of writing this trade insert here, we should be writing to a buffer of trades
-        //  which will be emptied occasionally when full.
-        //
+        // TODO: PER-6/7?
+        //       We don't want to perform this database update anymore.
         // For each trade, insert into ExecutedTrades table.
         database::write_insert_trades(trades, conn);
+
+        // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update
     }
 
