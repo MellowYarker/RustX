@@ -29,6 +29,7 @@ pub struct UserAccount {
      *      2. Fast access to orders in each market (see validate_order function).
     **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
+    pub modified: bool  // bool representing whether account has been modified since last batch write to DB
 }
 
 impl UserAccount {
@@ -39,6 +40,7 @@ impl UserAccount {
             password: password.clone(),
             id: None, // We set this later
             pending_orders: placed,
+            modified: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl UserAccount {
             password: password.to_string().clone(),
             id: Some(id),
             pending_orders: placed,
+            modified: false,
         }
     }
 
@@ -152,6 +155,7 @@ impl UserAccount {
 //          but we don't have that yet, and I think we would probably want some type of
 //          in-memory cache so we have to deal with the problem anyways.
 // ------------------------------------------------------------------------------------------------------
+#[derive(Debug)]
 pub struct Users {
     users: HashMap<String, UserAccount>,
     // TODO: This should be an LRU cache eventually
@@ -175,6 +179,13 @@ impl Users {
     /* Update the total user count. */
     pub fn direct_update_total(&mut self, conn: &mut Client) {
         self.total = database::read_total_accounts(conn);
+    }
+
+    /* Set all UserAccount's modified field to false. */
+    pub fn reset_users_modified(&mut self) {
+        for (_key, entry) in self.users.iter_mut() {
+            entry.modified = false;
+        }
     }
 
     /* TODO: Some later PR, PER-6/7? We might want to buffer new accounts?
@@ -225,6 +236,47 @@ impl Users {
     fn cache_user(&mut self, account: UserAccount) {
         self.id_map.insert(account.id.unwrap(), account.username.clone());
         self.users.insert(account.username.clone(), account);
+    }
+
+    /* Evict a user from the cache.
+     * We can only evict users who's modified fields are set to false.
+     * This is the only constraint on our cache eviction policy.
+     *
+     * We can have extremely simple cache eviction, ex, random or
+     * evict first candidate found.
+     *
+     * We could have extremely complicated cache eviction, ex.
+     *      - keep a ranking of users by likelihood they will be
+     *        modified again. Track things like:
+     *          - likelihood of an order being filled (track all orders in all markets).
+     *          - likelihood of *placing an order* again soon
+     *          - likelihood of cancelling an order soon
+     *
+     *  It remains to be seen if a basic cache eviction policy is good enough.
+     * */
+    fn evict_user(&mut self) {
+        // POLICY: Delete first candidate
+        //     Itereate over all the entries, once we find one that's not modified, stop
+        //     iterating, make note of the key, then delete the entry.
+
+        let mut key_to_evict: Option<i32> = None;
+
+        for (_name, entry) in self.users.iter() {
+            if !entry.modified {
+                key_to_evict = entry.id;
+                break;
+            }
+        }
+
+        // If we found a user we can evict
+        if let Some(key) = key_to_evict {
+            let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
+            self.users.remove(&username);
+        } else {
+            panic!("\
+We tried to evict a user, but all users in the cache are currently modified!
+We need to flush the Order buffer first!");
+        }
     }
 
     /* Checks the user cache*/
@@ -432,6 +484,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             place_holder = result.1.unwrap();
             account = &mut place_holder;
         }
+
+        // PER-6 set account modified to true because we're modifying their orders.
+        account.modified = true;
+
         // Since we can't remove entries while iterating, store the key's here.
         // We know we won't need more than trade.len() entries.
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());

@@ -58,6 +58,7 @@ impl Exchange {
     fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
+        stats.modified = true;
 
         // Write the newly placed order to the Orders table.
         // If Order isn't complete, adds to pending as well.
@@ -211,6 +212,9 @@ impl Exchange {
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
 
+        // PER-6 account is being modified so set modified to true.
+        account.modified = true;
+
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
 
@@ -329,9 +333,13 @@ impl Exchange {
                     // 3. Remove order from users account
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+
+                        // Indicate that the user's account has been modified.
+                        account.modified = true;
                     }
 
                     // TODO: Do we want to update market stats? total_cancelled maybe?
+                    //       If we do, we have to also set stats.modified = true
                     let mut to_remove = Vec::new();
                     to_remove.push(order_to_cancel.order_id);
 

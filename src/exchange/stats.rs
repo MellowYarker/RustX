@@ -9,6 +9,7 @@ pub struct SecStat {
     pub filled_buys: i32,
     pub filled_sells: i32,
     pub last_price: Option<f64>, // Last price we got
+    pub modified: bool
 }
 
 impl SecStat {
@@ -34,7 +35,8 @@ impl SecStat {
             total_sells: total_sells,
             filled_buys: 0,
             filled_sells: 0,
-            last_price: last_price
+            last_price: last_price,
+            modified: false
         }
     }
 
@@ -52,7 +54,8 @@ impl SecStat {
             total_sells,
             filled_buys,
             filled_sells,
-            last_price
+            last_price,
+            modified: false
         }
     }
 
