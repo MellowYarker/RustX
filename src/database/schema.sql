@@ -69,5 +69,6 @@ CREATE TABLE Markets (
 -- with SELECT count(*) from Orders; would be prohibitively expensive
 CREATE TABLE ExchangeStats (
     key             int,
-    total_orders    int
+    total_orders    int,
+    PRIMARY KEY (key)
 );
