@@ -847,12 +847,11 @@ WHERE order_id=$1;";
 pub fn update_total_orders(total_orders: i32, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     // Update the exchange total orders
-    let query_string: &str;
-    if total_orders == 1 {
-        query_string = "INSERT INTO ExchangeStats VALUES ($1);";
-    } else {
-        query_string = "UPDATE ExchangeStats set total_orders=$1;";
-    };
+    let query_string = "\
+INSERT INTO ExchangeStats
+VALUES (1, $1)
+ON CONFLICT (key) DO
+UPDATE SET total_orders=$1;";
 
     if let Err(e) = transaction.execute(query_string, &[&total_orders]) {
         eprintln!("{:?}", e);
