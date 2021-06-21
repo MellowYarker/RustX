@@ -138,10 +138,11 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         },
         // Upgrade the database, only the admin can do this.
         "upgrade_db" => {
-            if let 3 = words.len() {
-                let username  = words[1].to_string();
-                let password  = words[2].to_string();
-                return Ok(Request::UpgradeDbReq(username, password));
+            if let 4 = words.len() {
+                let db_name   = words[1].to_string();
+                let username  = words[2].to_string();
+                let password  = words[3].to_string();
+                return Ok(Request::UpgradeDbReq(db_name, username, password));
             } else {
                 malformed_req(&words[0], &words[0]);
                 return Err(());
@@ -260,7 +261,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 }
             }
         },
-        Request::UpgradeDbReq(username, password) => {
+        Request::UpgradeDbReq(db_name, username, password) => {
             // First, lets authenticate to make sure we're the admin.
             if username.as_str() == "admin" {
                 match users.authenticate(&username, &password, conn) {
@@ -273,7 +274,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                         file_path = file_path.split_whitespace().next().expect("Please be sure to enter text!").to_string();
                         match File::open(file_path) {
                             Ok(f) => {
-                                database::upgrade_db(BufReader::new(f), conn);
+                                database::upgrade_db(BufReader::new(f), &db_name);
                             },
                             Err(e) => {
                                 eprintln!("{}", e);

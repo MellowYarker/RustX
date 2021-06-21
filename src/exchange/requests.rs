@@ -160,5 +160,5 @@ pub enum Request {
     InfoReq(InfoRequest),
     SimReq(Simulation),
     UserReq(UserAccount, String), // Account followed by action
-    UpgradeDbReq(String, String), // username, password. Only admin can call this
+    UpgradeDbReq(String, String, String), // db_name, username, password. Only admin can call this
 }
