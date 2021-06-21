@@ -451,7 +451,7 @@ impl Exchange {
                 }
             }
             // buffers.update_buffer_states(&self.statistics, conn);
-            buffers.update_buffer_states(&self.statistics, &mut test_client);
+            buffers.update_buffer_states(&self, &mut test_client);
         }
 
         // If you want prints of each users account, uncomment this.

@@ -810,8 +810,8 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
 
         let query_string = format!["UPDATE Orders SET {} WHERE order_id=$1;", arguments];
         if let Err(e) = transaction.execute(query_string.as_str(), &[&order.order_id.unwrap()]) {
-            eprintln!("Bad Query: {}", query_string);
-            panic!("{}", e);
+            eprintln!("{}", e);
+            panic!("Something went wrong with the buffered order update statement.");
         };
     }
     // TODO: Figure out way to construct the partial updates.
@@ -844,8 +844,25 @@ WHERE order_id=$1;";
     transaction.commit().expect("Failed to commit buffered pending order delete transaction.");
 }
 
+pub fn update_total_orders(total_orders: i32, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    // Update the exchange total orders
+    let query_string: &str;
+    if total_orders == 1 {
+        query_string = "INSERT INTO ExchangeStats VALUES ($1);";
+    } else {
+        query_string = "UPDATE ExchangeStats set total_orders=$1;";
+    };
+
+    if let Err(e) = transaction.execute(query_string, &[&total_orders]) {
+        eprintln!("{:?}", e);
+        panic!("Something went wrong with the exchange total orders update query!");
+    };
+
+    transaction.commit().expect("Failed to commit buffered total order update transaction.");
+}
+
 pub fn update_buffered_markets(markets: &Vec<&SecStat>, conn: &mut Client) {
-// pub fn update_buffered_markets(markets: dyn Iterator<Item = &SecStat>, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     let query_string = "\
 UPDATE Markets

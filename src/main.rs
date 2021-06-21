@@ -85,7 +85,7 @@ fn main() {
             // Make sure our buffer states are accurate.
             // println!("{:?}", buffers);
             // TODO: PER-7 write our markets to DB too.
-            if buffers.update_buffer_states(&mut exchange.statistics, &mut testing_client) {
+            if buffers.update_buffer_states(&exchange, &mut testing_client) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in exchange.statistics.iter_mut() {
@@ -93,7 +93,7 @@ fn main() {
                 }
             }
         }
-        buffers.flush_on_shutdown(&mut exchange.statistics, &mut testing_client);
+        buffers.flush_on_shutdown(&exchange, &mut testing_client);
     } else {
         // User interface version
         println!("
@@ -126,7 +126,7 @@ fn main() {
             // Make sure our buffer states are accurate.
             // TODO: PER-7 write our markets to DB too.
             // println!("{:?}", buffers);
-            if buffers.update_buffer_states(&mut exchange.statistics, &mut testing_client) {
+            if buffers.update_buffer_states(&exchange, &mut testing_client) {
                 users.reset_users_modified();
 
                 // Set all market stats modified to false

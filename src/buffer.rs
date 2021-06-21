@@ -8,7 +8,7 @@ use chrono::{Local, DateTime};
 use postgres::Client;
 use crate::database;
 
-use crate::exchange::{OrderStatus, Trade, Order};
+use crate::exchange::{Exchange, OrderStatus, Trade, Order};
 use crate::exchange::stats::SecStat;
 
 
@@ -350,14 +350,14 @@ impl BufferCollection {
         }
     }
 
-    pub fn flush_on_shutdown(&mut self, stats: &HashMap<String, SecStat>, conn: &mut Client) {
+    pub fn flush_on_shutdown(&mut self, exchange: &Exchange, conn: &mut Client) {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
         // Flush Orders
         let mut categories = TableModCategories::new();
         self.buffered_orders.prepare_for_db_update(&mut categories);
-        BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+        BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
         self.buffered_orders.drain_buffer();
 
         // Flush Trades
@@ -370,7 +370,7 @@ impl BufferCollection {
      * Returns true if Orders buffer was drained, false otherwise.
      *      - If order buffer drained, we can reset user modified fields.
      * */
-    pub fn update_buffer_states(&mut self, stats: &HashMap<String, SecStat>, conn: &mut Client) -> bool {
+    pub fn update_buffer_states(&mut self, exchange: &Exchange, conn: &mut Client) -> bool {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
@@ -381,7 +381,7 @@ impl BufferCollection {
             let mut categories = TableModCategories::new();
             self.buffered_orders.prepare_for_db_update(&mut categories);
             // println!("\nCATEGORIES\n{:?}", categories);
-            BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+            BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
 
             self.buffered_orders.drain_buffer();
             return true;
@@ -395,7 +395,7 @@ impl BufferCollection {
             // trades have a foreign key constraint on order_id.
             let mut categories = TableModCategories::new();
             self.buffered_orders.prepare_for_db_update(&mut categories);
-            BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+            BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
 
             self.buffered_orders.drain_buffer();
             // -------------------------------------------------------------------
@@ -407,40 +407,42 @@ impl BufferCollection {
         return false;
     }
 
-    fn launch_batch_db_updates(categories: &TableModCategories, stats: &HashMap<String, SecStat>, conn: &mut Client) {
+    fn launch_batch_db_updates(categories: &TableModCategories, exchange: &Exchange, conn: &mut Client) {
         // TODO: Run these in separate threads
         BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
         BufferCollection::launch_update_orders(&categories.update_orders, conn);
         BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
         BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
+
+        BufferCollection::launch_exchange_stats_update(exchange.total_orders, conn);
+
         // TODO: We can decrease the computation time for this, see comment
         //       in prepare_for_db_update.
-        BufferCollection::launch_update_market(stats, conn);
+        BufferCollection::launch_update_market(&exchange.statistics, conn);
     }
 
     /* Entry point for batch inserting unknown orders to database */
     fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
-        // TODO database func
-        println!("INSERTING BUFFERED ORDERS!!");
         database::insert_buffered_orders(orders_to_insert, conn);
     }
 
     /* Entry point for batch updating known orders in database */
     fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
-        // TODO database func
         database::update_buffered_orders(orders_to_update, conn);
     }
 
     /* Entry point for batch inserting pending orders for unknown Orders to database  */
     fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
-        // TODO database func
         database::insert_buffered_pending(pending_to_insert, conn);
     }
 
     /* Entry point for batch deleting pending orders from database  */
     fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
-        // TODO database func
         database::delete_buffered_pending(pending_to_delete, conn);
+    }
+
+    fn launch_exchange_stats_update(total_orders: i32, conn: &mut Client) {
+        database::update_total_orders(total_orders, conn);
     }
 
     /* Entry point for batch updating market stats in database  */
@@ -449,6 +451,4 @@ impl BufferCollection {
         let updated_markets: Vec<&SecStat> = markets.values().filter(|market| market.modified == true).collect();
         database::update_buffered_markets(&updated_markets, conn);
     }
-
-    /* TODO: flush the buffers when the program is shutdown. */
 }
