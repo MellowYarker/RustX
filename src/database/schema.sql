@@ -68,5 +68,6 @@ CREATE TABLE Markets (
 -- doesn't store row count as metadata, getting row count
 -- with SELECT count(*) from Orders; would be prohibitively expensive
 CREATE TABLE ExchangeStats (
+    key             int
     total_orders    int
 );
