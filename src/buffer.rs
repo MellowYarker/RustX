@@ -6,6 +6,7 @@ use std::convert::TryInto;
 use chrono::{Local, DateTime};
 
 use postgres::Client;
+use crate::database;
 
 use crate::exchange::{OrderStatus, Trade, Order};
 use crate::exchange::stats::SecStat;
@@ -55,16 +56,16 @@ use crate::exchange::stats::SecStat;
  **/
 #[derive(Debug, Clone)]
 pub struct DatabaseReadyOrder {
-    action:       Option<String>,
-    symbol:       Option<String>,
-    quantity:     Option<i32>,
-    filled:       Option<i32>,
-    price:        Option<f64>,
-    order_id:     Option<i32>,
-    status:       Option<OrderStatus>,
-    user_id:      Option<i32>,
-    time_placed:  Option<DateTime<Local>>,
-    time_updated: Option<DateTime<Local>>,
+    pub action:       Option<String>,
+    pub symbol:       Option<String>,
+    pub quantity:     Option<i32>,
+    pub filled:       Option<i32>,
+    pub price:        Option<f64>,
+    pub order_id:     Option<i32>,
+    pub status:       Option<OrderStatus>,
+    pub user_id:      Option<i32>,
+    pub time_placed:  Option<DateTime<Local>>,
+    pub time_updated: Option<DateTime<Local>>,
 }
 
 impl DatabaseReadyOrder {
@@ -123,6 +124,7 @@ impl DatabaseReadyOrder {
 /* TODO: Do we want to do Trades here too?
  * This struct helps us categorize which tables
  * are to be modified given the current Orders buffer.*/
+#[derive(Debug)]
 pub struct TableModCategories {
     insert_orders: Vec<DatabaseReadyOrder>,
     update_orders: Vec<DatabaseReadyOrder>,
@@ -363,6 +365,7 @@ impl BufferCollection {
 
             let mut categories = TableModCategories::new();
             self.buffered_orders.prepare_for_db_update(&mut categories);
+            // println!("\nCATEGORIES\n{:?}", categories);
             BufferCollection::launch_batch_db_updates(&categories, stats, conn);
 
             self.buffered_orders.drain_buffer();
@@ -372,6 +375,8 @@ impl BufferCollection {
         if let BufferState::FULL = self.buffered_trades.state {
             // TODO: must drain trades buffer!
             eprintln!("WARNING: trade buffer is full. Write to the database!");
+
+            database::insert_buffered_trades(&self.buffered_trades.data, conn);
             self.buffered_trades.drain_buffer();
         };
 
@@ -392,27 +397,33 @@ impl BufferCollection {
     /* Entry point for batch inserting unknown orders to database */
     fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
         // TODO database func
+        println!("INSERTING BUFFERED ORDERS!!");
+        database::insert_buffered_orders(orders_to_insert, conn);
     }
 
     /* Entry point for batch updating known orders in database */
     fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
         // TODO database func
+        database::update_buffered_orders(orders_to_update, conn);
     }
 
     /* Entry point for batch inserting pending orders for unknown Orders to database  */
     fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
         // TODO database func
+        database::insert_buffered_pending(pending_to_insert, conn);
     }
 
     /* Entry point for batch deleting pending orders from database  */
     fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
         // TODO database func
+        database::delete_buffered_pending(pending_to_delete, conn);
     }
 
     /* Entry point for batch updating market stats in database  */
     fn launch_update_market(markets: &HashMap<String, SecStat>, conn: &mut Client) {
         // Create iterator of modified SecStat's and pass that to DB api.
-        markets.iter().filter(|(symbol, market)| market.modified == true);
+        let updated_markets: Vec<&SecStat> = markets.values().filter(|market| market.modified == true).collect();
+        database::update_buffered_markets(&updated_markets, conn);
     }
 
     /* TODO: flush the buffers when the program is shutdown. */
