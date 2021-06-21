@@ -62,7 +62,10 @@ impl UserAccount {
         return self.id.unwrap();
     }
 
-    /*
+    /* TODO: This has a bug. We return true even if the order theoretically cannot be filled.
+     *       Ex. The func doesn't consider if other orders (not belonging to user) would fill
+     *           the current order first.
+     *
      * Returns true if this order will not fill any pending orders placed by
      * this user. Otherwise, returns false.
      *
