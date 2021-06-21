@@ -350,6 +350,21 @@ impl BufferCollection {
         }
     }
 
+    pub fn flush_on_shutdown(&mut self, stats: &HashMap<String, SecStat>, conn: &mut Client) {
+        self.buffered_orders.update_space_remaining();
+        self.buffered_trades.update_space_remaining();
+
+        // Flush Orders
+        let mut categories = TableModCategories::new();
+        self.buffered_orders.prepare_for_db_update(&mut categories);
+        BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+        self.buffered_orders.drain_buffer();
+
+        // Flush Trades
+        database::insert_buffered_trades(&self.buffered_trades.data, conn);
+        self.buffered_trades.drain_buffer();
+    }
+
     /* Check our buffer states.
      * TODO: Eventually, we will write our buffers to the database in here.
      * Returns true if Orders buffer was drained, false otherwise.
@@ -375,6 +390,15 @@ impl BufferCollection {
         if let BufferState::FULL = self.buffered_trades.state {
             // TODO: must drain trades buffer!
             eprintln!("WARNING: trade buffer is full. Write to the database!");
+            // -------------------------------------------------------------------
+            // Don't like this, but we have to insert orders before trades bc
+            // trades have a foreign key constraint on order_id.
+            let mut categories = TableModCategories::new();
+            self.buffered_orders.prepare_for_db_update(&mut categories);
+            BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+
+            self.buffered_orders.drain_buffer();
+            // -------------------------------------------------------------------
 
             database::insert_buffered_trades(&self.buffered_trades.data, conn);
             self.buffered_trades.drain_buffer();

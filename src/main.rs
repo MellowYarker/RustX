@@ -21,7 +21,7 @@ fn main() {
     let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
     let mut users    = Users::new();     // All our users are stored here.
     // let mut buffers  = BufferCollection::new(20000, 20000); // In-memory buffers that will write to DB.
-    let mut buffers  = BufferCollection::new(2, 2); // In-memory buffers that will write to DB.
+    let mut buffers  = BufferCollection::new(2000, 2000); // In-memory buffers that will write to DB.
 
     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
@@ -93,6 +93,7 @@ fn main() {
                 }
             }
         }
+        buffers.flush_on_shutdown(&mut exchange.statistics, &mut testing_client);
     } else {
         // User interface version
         println!("
@@ -133,6 +134,7 @@ fn main() {
                     entry.modified = false;
                 }
             }
+            // TODO: Flush Buffers on SigINT, SigKill
         }
     }
 }

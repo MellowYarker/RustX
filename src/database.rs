@@ -788,6 +788,32 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
 pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    for order in orders {
+        let mut arguments = String::new();
+
+        if let Some(amount_filled) = order.filled {
+            arguments.push_str(format!["filled={}, ", amount_filled].as_str());
+        }
+
+        if let Some(new_status) = order.status {
+            arguments.push_str(format!["status='{:?}', ", new_status].as_str());
+        }
+
+        if let Some(update_time) = order.time_updated {
+            arguments.push_str(format!["time_updated='{}', ", update_time].as_str());
+        }
+
+        arguments.pop();
+        arguments.pop();
+        arguments.push(' ');
+
+        let query_string = format!["UPDATE Orders SET {} WHERE order_id=$1;", arguments];
+        if let Err(e) = transaction.execute(query_string.as_str(), &[&order.order_id.unwrap()]) {
+            eprintln!("Bad Query: {}", query_string);
+            panic!("{}", e);
+        };
+    }
     // TODO: Figure out way to construct the partial updates.
     transaction.commit().expect("Failed to commit buffered order update transaction.");
 }
