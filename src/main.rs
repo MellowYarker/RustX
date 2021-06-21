@@ -81,7 +81,7 @@ fn main() {
             // Make sure our buffer states are accurate.
             println!("{:?}", buffers);
             // TODO: PER-7 write our markets to DB too.
-            if buffers.update_buffer_states() {
+            if buffers.update_buffer_states(&mut exchange.statistics, &mut client) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in exchange.statistics.iter_mut() {
@@ -120,7 +120,7 @@ fn main() {
 
             // Make sure our buffer states are accurate.
             // TODO: PER-7 write our markets to DB too.
-            if buffers.update_buffer_states() {
+            if buffers.update_buffer_states(&mut exchange.statistics, &mut client) {
                 users.reset_users_modified();
 
                 // Set all market stats modified to false

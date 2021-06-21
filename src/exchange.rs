@@ -448,7 +448,7 @@ impl Exchange {
                     }
                 }
             }
-            buffers.update_buffer_states();
+            buffers.update_buffer_states(&self.statistics, conn);
         }
 
         // If you want prints of each users account, uncomment this.

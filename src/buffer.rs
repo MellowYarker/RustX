@@ -5,7 +5,10 @@ use std::convert::TryInto;
 
 use chrono::{Local, DateTime};
 
+use postgres::Client;
+
 use crate::exchange::{OrderStatus, Trade, Order};
+use crate::exchange::stats::SecStat;
 
 
 /* Just some notes.
@@ -50,7 +53,7 @@ use crate::exchange::{OrderStatus, Trade, Order};
  *      3. Remove from Pending (Unknown order cancelled/completed)
  *      4. Update Orders (Known order updated)
  **/
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DatabaseReadyOrder {
     action:       Option<String>,
     symbol:       Option<String>,
@@ -114,6 +117,33 @@ impl DatabaseReadyOrder {
         }
 
         self.time_updated = Some(Local::now());
+    }
+}
+
+/* TODO: Do we want to do Trades here too?
+ * This struct helps us categorize which tables
+ * are to be modified given the current Orders buffer.*/
+pub struct TableModCategories {
+    insert_orders: Vec<DatabaseReadyOrder>,
+    update_orders: Vec<DatabaseReadyOrder>,
+    insert_pending: Vec<i32>,
+    delete_pending: Vec<i32>,
+    update_markets: HashMap<String, ()> // Just store symbols of modified markets
+}
+
+impl TableModCategories {
+    pub fn new() -> Self {
+        let update_orders  = Vec::new();
+        let delete_pending = Vec::new();
+        let update_markets = HashMap::new();
+
+        TableModCategories {
+            insert_orders: update_orders.clone(),
+            update_orders,
+            insert_pending: delete_pending.clone(),
+            delete_pending,
+            update_markets
+        }
     }
 }
 
@@ -204,6 +234,39 @@ impl OrderBuffer {
         }
     }
 
+    fn prepare_for_db_update(&mut self, categorize: &mut TableModCategories) {
+        // TODO: Create a TableModCategories struct, fill it by iterating over the HashMap
+        //       and assigning DatabaseReadyOrder's to the appropriate fields vecs.
+        //
+        // TODO: If we want to decrease redundant computation, and increase redundant data
+        // replication, we can store Some(symbol) in ALL DatabaseReadyOrder's, then use the
+        // update_market field of TableModCategories.
+        for (id, order) in self.data.iter_mut() {
+            match order.order_id {
+                // Unknown order
+                // care about insert pending, insert order
+                Some(_) => {
+                    categorize.insert_orders.push(order.clone());
+
+                    if let OrderStatus::PENDING = order.status.unwrap() {
+                        categorize.insert_pending.push(order.order_id.unwrap().clone());
+                    }
+                },
+                // Known order
+                // care about delete pending, update order
+                None => {
+                    // First, add the order ID.
+                    order.order_id = Some(id.clone());
+                    categorize.update_orders.push(order.clone());
+
+                    // If cancelled/complete
+                    if let Some(_) = order.status {
+                        categorize.delete_pending.push(order.order_id.unwrap().clone());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -290,13 +353,18 @@ impl BufferCollection {
      * Returns true if Orders buffer was drained, false otherwise.
      *      - If order buffer drained, we can reset user modified fields.
      * */
-    pub fn update_buffer_states(&mut self) -> bool {
+    pub fn update_buffer_states(&mut self, stats: &HashMap<String, SecStat>, conn: &mut Client) -> bool {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
         if let BufferState::FULL = self.buffered_orders.state {
             // TODO: must drain orders buffer!
             eprintln!("WARNING: order buffer is full. Write to the database!");
+
+            let mut categories = TableModCategories::new();
+            self.buffered_orders.prepare_for_db_update(&mut categories);
+            BufferCollection::launch_batch_db_updates(&categories, stats, conn);
+
             self.buffered_orders.drain_buffer();
             return true;
         };
@@ -309,4 +377,43 @@ impl BufferCollection {
 
         return false;
     }
+
+    fn launch_batch_db_updates(categories: &TableModCategories, stats: &HashMap<String, SecStat>, conn: &mut Client) {
+        // TODO: Run these in separate threads
+        BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
+        BufferCollection::launch_update_orders(&categories.update_orders, conn);
+        BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
+        BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
+        // TODO: We can decrease the computation time for this, see comment
+        //       in prepare_for_db_update.
+        BufferCollection::launch_update_market(stats, conn);
+    }
+
+    /* Entry point for batch inserting unknown orders to database */
+    fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+        // TODO database func
+    }
+
+    /* Entry point for batch updating known orders in database */
+    fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+        // TODO database func
+    }
+
+    /* Entry point for batch inserting pending orders for unknown Orders to database  */
+    fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
+        // TODO database func
+    }
+
+    /* Entry point for batch deleting pending orders from database  */
+    fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
+        // TODO database func
+    }
+
+    /* Entry point for batch updating market stats in database  */
+    fn launch_update_market(markets: &HashMap<String, SecStat>, conn: &mut Client) {
+        // Create iterator of modified SecStat's and pass that to DB api.
+        markets.iter().filter(|(symbol, market)| market.modified == true);
+    }
+
+    /* TODO: flush the buffers when the program is shutdown. */
 }
