@@ -238,6 +238,47 @@ impl Users {
         self.users.insert(account.username.clone(), account);
     }
 
+    /* Evict a user from the cache.
+     * We can only evict users who's modified fields are set to false.
+     * This is the only constraint on our cache eviction policy.
+     *
+     * We can have extremely simple cache eviction, ex, random or
+     * evict first candidate found.
+     *
+     * We could have extremely complicated cache eviction, ex.
+     *      - keep a ranking of users by likelihood they will be
+     *        modified again. Track things like:
+     *          - likelihood of an order being filled (track all orders in all markets).
+     *          - likelihood of *placing an order* again soon
+     *          - likelihood of cancelling an order soon
+     *
+     *  It remains to be seen if a basic cache eviction policy is good enough.
+     * */
+    fn evict_user(&mut self) {
+        // POLICY: Delete first candidate
+        //     Itereate over all the entries, once we find one that's not modified, stop
+        //     iterating, make note of the key, then delete the entry.
+
+        let mut key_to_evict: Option<i32> = None;
+
+        for (_name, entry) in self.users.iter() {
+            if !entry.modified {
+                key_to_evict = entry.id;
+                break;
+            }
+        }
+
+        // If we found a user we can evict
+        if let Some(key) = key_to_evict {
+            let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
+            self.users.remove(&username);
+        } else {
+            panic!("\
+We tried to evict a user, but all users in the cache are currently modified!
+We need to flush the Order buffer first!");
+        }
+    }
+
     /* Checks the user cache*/
     fn auth_check_cache<'a>(&self, username: &'a String, password: & String) -> Result<(), AuthError<'a>> {
         if let Some(account) = self.users.get(username) {
