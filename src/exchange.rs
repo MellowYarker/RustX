@@ -211,6 +211,9 @@ impl Exchange {
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
 
+        // PER-6 account is being modified so set modified to true.
+        account.modified = true;
+
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
 
@@ -329,6 +332,9 @@ impl Exchange {
                     // 3. Remove order from users account
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+
+                        // Indicate that the user's account has been modified.
+                        account.modified = true;
                     }
 
                     // TODO: Do we want to update market stats? total_cancelled maybe?

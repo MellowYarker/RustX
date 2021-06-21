@@ -29,6 +29,7 @@ pub struct UserAccount {
      *      2. Fast access to orders in each market (see validate_order function).
     **/
     pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
+    pub modified: bool  // bool representing whether account has been modified since last batch write to DB
 }
 
 impl UserAccount {
@@ -39,6 +40,7 @@ impl UserAccount {
             password: password.clone(),
             id: None, // We set this later
             pending_orders: placed,
+            modified: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl UserAccount {
             password: password.to_string().clone(),
             id: Some(id),
             pending_orders: placed,
+            modified: false,
         }
     }
 
@@ -152,6 +155,7 @@ impl UserAccount {
 //          but we don't have that yet, and I think we would probably want some type of
 //          in-memory cache so we have to deal with the problem anyways.
 // ------------------------------------------------------------------------------------------------------
+#[derive(Debug)]
 pub struct Users {
     users: HashMap<String, UserAccount>,
     // TODO: This should be an LRU cache eventually
@@ -175,6 +179,13 @@ impl Users {
     /* Update the total user count. */
     pub fn direct_update_total(&mut self, conn: &mut Client) {
         self.total = database::read_total_accounts(conn);
+    }
+
+    /* Set all UserAccount's modified field to false. */
+    pub fn reset_users_modified(&mut self) {
+        for (_key, entry) in self.users.iter_mut() {
+            entry.modified = false;
+        }
     }
 
     /* TODO: Some later PR, PER-6/7? We might want to buffer new accounts?
@@ -432,6 +443,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             place_holder = result.1.unwrap();
             account = &mut place_holder;
         }
+
+        // PER-6 set account modified to true because we're modifying their orders.
+        account.modified = true;
+
         // Since we can't remove entries while iterating, store the key's here.
         // We know we won't need more than trade.len() entries.
         let mut entries_to_remove: Vec<i32> = Vec::with_capacity(trades.len());

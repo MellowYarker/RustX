@@ -287,8 +287,10 @@ impl BufferCollection {
 
     /* Check our buffer states.
      * TODO: Eventually, we will write our buffers to the database in here.
+     * Returns true if Orders buffer was drained, false otherwise.
+     *      - If order buffer drained, we can reset user modified fields.
      * */
-    pub fn update_buffer_states(&mut self) {
+    pub fn update_buffer_states(&mut self) -> bool {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
@@ -296,6 +298,7 @@ impl BufferCollection {
             // TODO: must drain orders buffer!
             eprintln!("WARNING: order buffer is full. Write to the database!");
             self.buffered_orders.drain_buffer();
+            return true;
         };
 
         if let BufferState::FULL = self.buffered_trades.state {
@@ -303,5 +306,7 @@ impl BufferCollection {
             eprintln!("WARNING: trade buffer is full. Write to the database!");
             self.buffered_trades.drain_buffer();
         };
+
+        return false;
     }
 }
