@@ -178,8 +178,8 @@ impl OrderBuffer {
     /* Gives us access to the internal data buffer. */
     pub fn drain_buffer(&mut self) -> hash_map::Drain<'_, i32, DatabaseReadyOrder> {
         match self.state {
-            BufferState::EMPTY => eprintln!("The buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => eprintln!("The buffer is not full, we can wait before draining."),
+            BufferState::EMPTY => eprintln!("The Order buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => eprintln!("The Order buffer is not full, we can wait before draining."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
@@ -305,8 +305,8 @@ impl TradeBuffer {
     /* Call this when we want to consume the buffer and write it to the database. */
     pub fn drain_buffer(&mut self) -> vec::Drain<'_, Trade> {
         match self.state {
-            BufferState::EMPTY => eprintln!("The buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => eprintln!("The buffer is not full, we can wait before draining."),
+            BufferState::EMPTY => eprintln!("The trade buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => eprintln!("The trade buffer is not full, we can wait before draining."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
