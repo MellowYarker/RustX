@@ -169,9 +169,12 @@ pub struct Users {
 impl Users {
 
     pub fn new() -> Self {
-        let map: HashMap<String, UserAccount> = HashMap::new();
+        // let map: HashMap<String, UserAccount> = HashMap::new();
+        let max_users = 1000;
+        let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
         // TODO: Eventually we want to do with capacity
-        let id_map: HashMap<i32, String> = HashMap::new();
+        // let id_map: HashMap<i32, String> = HashMap::new();
+        let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
         Users {
             users: map,
             id_map: id_map,
@@ -237,6 +240,12 @@ impl Users {
 
     /* Stores a user in the programs cache. */
     fn cache_user(&mut self, account: UserAccount) {
+        // Evict a user if we don't have space.
+        if self.users.len() == self.users.capacity() {
+            self.evict_user();
+            // TODO: We have to trigger a flush of the DB buffers.
+        }
+
         self.id_map.insert(account.id.unwrap(), account.username.clone());
         self.users.insert(account.username.clone(), account);
     }
@@ -397,7 +406,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      */
     fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
         match self.users.get_mut(username) {
-            Some(account) => return (Some(account), None),
+            // Some(account) => return (Some(account), None),
+            Some(_) => (),
             None => {
                 let mut account = match database::read_account(username, conn) {
                     Ok(acc) => acc,
@@ -406,9 +416,11 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
                 // Fill this account with the pending orders
                 database::read_account_pending_orders(&mut account, conn);
-                return (None, Some(account));
+                self.cache_user(account);
+                // return (None, Some(account));
             }
         }
+        return (self.users.get_mut(username), None);
     }
 
     /* TODO: This is very likley outdated
@@ -424,9 +436,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
                     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
-                // TODO: The cached pending orders are probably up to date?
-                //       Don't think we need to call this.
-                database::read_account_pending_orders(account, &mut client);
                 let mut executed_trades: Vec<Trade> = Vec::new();
                 database::read_account_executed_trades(account, &mut executed_trades, &mut client);
 
@@ -560,14 +569,15 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         //        We don't want to write this pending delete to the DB anymore
         // Remove all the completed orders from the database's pending table
         // and update Orders table.
-        if entries_to_remove.len() > 0 {
-            database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
-        }
+        // PER-7 TEST
+        // if entries_to_remove.len() > 0 {
+        //     database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
+        // }
 
         // TODO - PER-6/7?
         //        We don't want to perform this partial order DB update anymore.
         // For each trade that partially filled an order, update `filled` in Orders table.
-        database::write_partial_update_filled_counts(&update_partial_filled_vec, conn);
+        // database::write_partial_update_filled_counts(&update_partial_filled_vec, conn); // PER-7 TEST
     }
 
     /* Given a vector of Trades, update all the accounts
@@ -601,7 +611,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // TODO: PER-6/7?
         //       We don't want to perform this database update anymore.
         // For each trade, insert into ExecutedTrades table.
-        database::write_insert_trades(trades, conn);
+        // database::write_insert_trades(trades, conn); // PER-7 TEST
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update
