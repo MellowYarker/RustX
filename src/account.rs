@@ -169,11 +169,9 @@ pub struct Users {
 impl Users {
 
     pub fn new() -> Self {
-        // let map: HashMap<String, UserAccount> = HashMap::new();
+        // TODO: How do we want to decide what the max # users is?
         let max_users = 1000;
         let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
-        // TODO: Eventually we want to do with capacity
-        // let id_map: HashMap<i32, String> = HashMap::new();
         let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
         Users {
             users: map,
@@ -410,7 +408,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *
      * This means we do not update the cache!
      */
-    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
+    // fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
+    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
             // Some(account) => return (Some(account), None),
             Some(_) => (),
@@ -426,7 +425,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 // return (None, Some(account));
             }
         }
-        return (self.users.get_mut(username), None);
+        // return (self.users.get_mut(username), None);
+        return self.users.get_mut(username).unwrap();
     }
 
     /* TODO: This is very likley outdated
@@ -476,7 +476,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             Some(name) => name.clone(),
             None => {
                 // Search the database for the user with this id.
-                // Do not update the cache
                 let result = database::read_user_by_id(id, conn);
                 if let Err(_) = result {
                     panic!("Query to get user by id failed!");
@@ -486,22 +485,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             }
         };
 
-        // If _get_mut gives us a database entry, place_holder will hold it
-        // and account will refer to place_holder.
-        let mut place_holder: UserAccount;
-        let account: &mut UserAccount;
-
-        // Gives either a mutable reference to cache,
-        // or constructs account from db (no cache update).
-        let result = self._get_mut(&username, conn);
-        if let Some(acc) = result.0 {
-            // Got reference to cache
-            account = acc;
-        } else {
-            // Got user from database
-            place_holder = result.1.unwrap();
-            account = &mut place_holder;
-        }
+        // Gives a mutable reference to cache.
+        let account = self._get_mut(&username, conn);
 
         // PER-6 set account modified to true because we're modifying their orders.
         account.modified = true;

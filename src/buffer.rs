@@ -53,6 +53,9 @@ use crate::exchange::stats::SecStat;
  *      2. Insert to Pending (Unknown order)
  *      3. Remove from Pending (Unknown order cancelled/completed)
  *      4. Update Orders (Known order updated)
+ *
+ *  This struct summarizes all changes made to an order since the last write.
+ *  It's effectively a DIFF.
  **/
 #[derive(Debug, Clone)]
 pub struct DatabaseReadyOrder {
@@ -366,29 +369,28 @@ impl BufferCollection {
     }
 
     /* Check our buffer states.
-     * TODO: Eventually, we will write our buffers to the database in here.
      * Returns true if Orders buffer was drained, false otherwise.
      *      - If order buffer drained, we can reset user modified fields.
-     * */
+     **/
     pub fn update_buffer_states(&mut self, exchange: &Exchange, conn: &mut Client) -> bool {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
+        let mut orders_drained = false;
+
         if let BufferState::FULL = self.buffered_orders.state {
-            // TODO: must drain orders buffer!
             eprintln!("WARNING: order buffer is full. Write to the database!");
 
+            // Prepare for Order buffer drain
             let mut categories = TableModCategories::new();
             self.buffered_orders.prepare_for_db_update(&mut categories);
-            // println!("\nCATEGORIES\n{:?}", categories);
             BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
 
             self.buffered_orders.drain_buffer();
-            return true;
+            orders_drained = true;
         };
 
         if let BufferState::FULL = self.buffered_trades.state {
-            // TODO: must drain trades buffer!
             eprintln!("WARNING: trade buffer is full. Write to the database!");
             // -------------------------------------------------------------------
             // Don't like this, but we have to insert orders before trades bc
@@ -404,12 +406,17 @@ impl BufferCollection {
             self.buffered_trades.drain_buffer();
         };
 
-        return false;
+        return orders_drained;
     }
 
     fn launch_batch_db_updates(categories: &TableModCategories, exchange: &Exchange, conn: &mut Client) {
-        // TODO: Run these in separate threads
+        // This has to run first, since other tables have a foreign key constraint
+        // on this table's order_id field.
+
+        // TODO: Would it decrease insert time to sort the insert_orders?
         BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
+
+        // TODO: Run these in separate threads
         BufferCollection::launch_update_orders(&categories.update_orders, conn);
         BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
         BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
@@ -441,6 +448,7 @@ impl BufferCollection {
         database::delete_buffered_pending(pending_to_delete, conn);
     }
 
+    /* Entry point for batch market stats updates. */
     fn launch_exchange_stats_update(total_orders: i32, conn: &mut Client) {
         database::update_total_orders(total_orders, conn);
     }
