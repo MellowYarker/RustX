@@ -19,7 +19,7 @@ pub use crate::database;
 
 pub use crate::buffer::BufferCollection;
 
-use postgres::Client;
+use postgres::{Client, NoTls};
 
 // Error types for price information.
 pub enum PriceError {
@@ -62,7 +62,7 @@ impl Exchange {
 
         // Write the newly placed order to the Orders table.
         // If Order isn't complete, adds to pending as well.
-        database::write_insert_order(order, conn);
+        // database::write_insert_order(order, conn); // PER-7 TEST
 
         // Update the counters and the price
         match &order.action[..] {
@@ -84,7 +84,7 @@ impl Exchange {
             // Updates in-mem data
             stats.update_market_stats(price, &trades);
             // Updates database
-            database::write_update_market_stats(stats, conn);
+            // database::write_update_market_stats(stats, conn); // PER-7 TEST
 
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
@@ -349,7 +349,7 @@ impl Exchange {
 
                     // TODO: PER-6/7
                     //       Remove this db write eventually, we just write the buffers.
-                    database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED);
+                    // database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED); // PER-7 TEST
 
                     return Ok(());
 
@@ -373,6 +373,8 @@ impl Exchange {
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
     pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
+
+        // let mut test_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls).expect("Failed to access test db");
 
         let buy = String::from("BUY");
         let sell = String::from("SELL");
@@ -448,7 +450,15 @@ impl Exchange {
                     }
                 }
             }
-            buffers.update_buffer_states();
+
+            // buffers.update_buffer_states(&self, &mut test_client);
+            if buffers.update_buffer_states(&self, conn) {
+                users.reset_users_modified();
+                // Set all market stats modified to false
+                for (_key, entry) in self.statistics.iter_mut() {
+                    entry.modified = false;
+                }
+            }
         }
 
         // If you want prints of each users account, uncomment this.

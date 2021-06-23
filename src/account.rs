@@ -62,7 +62,10 @@ impl UserAccount {
         return self.id.unwrap();
     }
 
-    /*
+    /* TODO: This has a bug. We return true even if the order theoretically cannot be filled.
+     *       Ex. The func doesn't consider if other orders (not belonging to user) would fill
+     *           the current order first.
+     *
      * Returns true if this order will not fill any pending orders placed by
      * this user. Otherwise, returns false.
      *
@@ -166,9 +169,10 @@ pub struct Users {
 impl Users {
 
     pub fn new() -> Self {
-        let map: HashMap<String, UserAccount> = HashMap::new();
-        // TODO: Eventually we want to do with capacity
-        let id_map: HashMap<i32, String> = HashMap::new();
+        // TODO: How do we want to decide what the max # users is?
+        let max_users = 1000;
+        let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
+        let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
         Users {
             users: map,
             id_map: id_map,
@@ -234,6 +238,12 @@ impl Users {
 
     /* Stores a user in the programs cache. */
     fn cache_user(&mut self, account: UserAccount) {
+        // Evict a user if we don't have space.
+        if self.users.len() == self.users.capacity() {
+            self.evict_user();
+            // TODO: We have to trigger a flush of the DB buffers.
+        }
+
         self.id_map.insert(account.id.unwrap(), account.username.clone());
         self.users.insert(account.username.clone(), account);
     }
@@ -318,6 +328,10 @@ We need to flush the Order buffer first!");
             match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
                 Ok(mut account) => {
+                    // TODO: This is an extremely expensive operation.
+                    //       I would rather search all our in-memory markets and pull the data from
+                    //       there.
+
                     // Since our user will be cached, and we are likely to do things with the user.
                     // We should probably make sure the in-mem pending orders are consistent w/ the database!
                     database::read_account_pending_orders(&mut account, conn);
@@ -384,6 +398,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *       orders are stored in the temp buffer but not the db or program data structures,
      *       then there's no way for us to know about the state of the users account.
      *
+     * TODO: Since we now cache, lets change the return type to be less complicated.
+     *
      * For internal use only.
      *
      * If the account is in the cache (active user), we return a mutable ref to the user.
@@ -392,9 +408,9 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *
      * This means we do not update the cache!
      */
-    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
+    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
-            Some(account) => return (Some(account), None),
+            Some(_) => (),
             None => {
                 let mut account = match database::read_account(username, conn) {
                     Ok(acc) => acc,
@@ -403,9 +419,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
                 // Fill this account with the pending orders
                 database::read_account_pending_orders(&mut account, conn);
-                return (None, Some(account));
+                self.cache_user(account);
             }
         }
+        return self.users.get_mut(username).unwrap();
     }
 
     /* TODO: This is very likley outdated
@@ -421,9 +438,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
                     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
-                // TODO: The cached pending orders are probably up to date?
-                //       Don't think we need to call this.
-                database::read_account_pending_orders(account, &mut client);
                 let mut executed_trades: Vec<Trade> = Vec::new();
                 database::read_account_executed_trades(account, &mut executed_trades, &mut client);
 
@@ -458,7 +472,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             Some(name) => name.clone(),
             None => {
                 // Search the database for the user with this id.
-                // Do not update the cache
                 let result = database::read_user_by_id(id, conn);
                 if let Err(_) = result {
                     panic!("Query to get user by id failed!");
@@ -468,22 +481,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             }
         };
 
-        // If _get_mut gives us a database entry, place_holder will hold it
-        // and account will refer to place_holder.
-        let mut place_holder: UserAccount;
-        let account: &mut UserAccount;
-
-        // Gives either a mutable reference to cache,
-        // or constructs account from db (no cache update).
-        let result = self._get_mut(&username, conn);
-        if let Some(acc) = result.0 {
-            // Got reference to cache
-            account = acc;
-        } else {
-            // Got user from database
-            place_holder = result.1.unwrap();
-            account = &mut place_holder;
-        }
+        // Gives a mutable reference to cache.
+        let account = self._get_mut(&username, conn);
 
         // PER-6 set account modified to true because we're modifying their orders.
         account.modified = true;
@@ -557,14 +556,15 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         //        We don't want to write this pending delete to the DB anymore
         // Remove all the completed orders from the database's pending table
         // and update Orders table.
-        if entries_to_remove.len() > 0 {
-            database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
-        }
+        // PER-7 TEST
+        // if entries_to_remove.len() > 0 {
+        //     database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
+        // }
 
         // TODO - PER-6/7?
         //        We don't want to perform this partial order DB update anymore.
         // For each trade that partially filled an order, update `filled` in Orders table.
-        database::write_partial_update_filled_counts(&update_partial_filled_vec, conn);
+        // database::write_partial_update_filled_counts(&update_partial_filled_vec, conn); // PER-7 TEST
     }
 
     /* Given a vector of Trades, update all the accounts
@@ -598,7 +598,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // TODO: PER-6/7?
         //       We don't want to perform this database update anymore.
         // For each trade, insert into ExecutedTrades table.
-        database::write_insert_trades(trades, conn);
+        // database::write_insert_trades(trades, conn); // PER-7 TEST
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update

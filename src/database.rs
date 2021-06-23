@@ -1,4 +1,4 @@
-use postgres::Client;
+use postgres::{Client, NoTls};
 use chrono::{Utc, DateTime, FixedOffset};
 
 use std::collections::{BinaryHeap, HashMap};
@@ -11,6 +11,7 @@ use std::io::prelude::*;
 use crate::exchange::{Exchange, Market, Order, SecStat, Trade, UserAccount, OrderStatus};
 use crate::account::AuthError;
 
+use crate::buffer::{DatabaseReadyOrder};
 /* ---- Specification for the db API ----
  *
  *      Functions that start with populate will read from the db on program startup ONLY.
@@ -184,10 +185,14 @@ pub fn populate_exchange_statistics(exchange: &mut Exchange, conn: &mut Client) 
  *      When we fulfill a request, replace the first word with #
  *      as it can signify a comment/completed task.
  * */
-pub fn upgrade_db<R>(reader: std::io::BufReader<R>, conn: &mut Client)
+pub fn upgrade_db<R>(reader: std::io::BufReader<R>, db_name: &String)
 where
     R: std::io::Read
 {
+    let db_config = format!["host=localhost user=postgres dbname={}", db_name];
+    let mut conn = Client::connect(db_config.as_str(), NoTls)
+        .expect("Failed to connect to Database!");
+
     let mut query_string = String::from("\
 INSERT INTO Markets
 (symbol, name, total_buys, total_sells, filled_buys, filled_sells, latest_price)
@@ -741,5 +746,161 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
             return;
         }
     }
+}
+
+
+/******************************************************************************************************
+ *                                  NEW API - Buffered Database                                       *
+ ******************************************************************************************************/
+// TODO: For all, try to construct a large query string and execute just once.
+//       I have a sneaking suspicion that calling exectute() n times where n is large
+//       is less performant, even within a transaction, than a single execute() with a large query.
+pub fn insert_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    // Everything is to be updated
+    let query_string = "\
+INSERT INTO Orders
+(order_ID, symbol, action, quantity, filled, price, user_ID, status, time_placed, time_updated)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
+
+    for order in orders {
+
+        let status: String = format!["{:?}", order.status.unwrap()];
+
+        transaction.execute(query_string, &[&order.order_id,
+                                     &order.symbol,
+                                     &order.action,
+                                     &order.quantity,
+                                     &order.filled,
+                                     &order.price,
+                                     &order.user_id,
+                                     &status,
+                                     &order.time_placed,
+                                     &order.time_updated
+                                    ]).expect("FAILED TO EXEC INSERT ORDERS");
+    }
+
+    transaction.commit().expect("Failed to commit buffered order insert transaction.");
+}
+
+pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    for order in orders {
+        let mut arguments = String::new();
+
+        if let Some(amount_filled) = order.filled {
+            arguments.push_str(format!["filled={}, ", amount_filled].as_str());
+        }
+
+        if let Some(new_status) = order.status {
+            arguments.push_str(format!["status='{:?}', ", new_status].as_str());
+        }
+
+        if let Some(update_time) = order.time_updated {
+            arguments.push_str(format!["time_updated='{}', ", update_time].as_str());
+        }
+
+        arguments.pop();
+        arguments.pop();
+        arguments.push(' ');
+
+        let query_string = format!["UPDATE Orders SET {} WHERE order_id=$1;", arguments];
+        if let Err(e) = transaction.execute(query_string.as_str(), &[&order.order_id.unwrap()]) {
+            eprintln!("{}", e);
+            panic!("Something went wrong with the buffered order update statement.");
+        };
+    }
+    // TODO: Figure out way to construct the partial updates.
+    transaction.commit().expect("Failed to commit buffered order update transaction.");
+}
+
+pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    let query_string = "\
+INSERT INTO PendingOrders
+VALUES ($1);";
+
+    for order in pending {
+        transaction.execute(query_string, &[&order]).expect("FAILED TO EXEC INSERT PENDING");
+    }
+
+    transaction.commit().expect("Failed to commit buffered pending order insert transaction.");
+}
+
+pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    let query_string = "\
+DELETE FROM PendingOrders
+WHERE order_id=$1;";
+
+    for order in pending {
+        transaction.execute(query_string, &[&order]).expect("FAILED TO EXEC DELETE PENDING");
+    }
+    transaction.commit().expect("Failed to commit buffered pending order delete transaction.");
+}
+
+pub fn update_total_orders(total_orders: i32, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    // Update the exchange total orders
+    let query_string = "\
+INSERT INTO ExchangeStats
+VALUES (1, $1)
+ON CONFLICT (key) DO
+UPDATE SET total_orders=$1;";
+
+    if let Err(e) = transaction.execute(query_string, &[&total_orders]) {
+        eprintln!("{:?}", e);
+        panic!("Something went wrong with the exchange total orders update query!");
+    };
+
+    transaction.commit().expect("Failed to commit buffered total order update transaction.");
+}
+
+pub fn update_buffered_markets(markets: &Vec<&SecStat>, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    let query_string = "\
+UPDATE Markets
+SET (total_buys, total_sells, filled_buys, filled_sells, latest_price) =
+($1, $2, $3, $4, $5)
+WHERE Markets.symbol = $6;";
+
+    for market in markets {
+        transaction.execute(query_string, &[&market.total_buys,
+                                            &market.total_sells,
+                                            &market.filled_buys,
+                                            &market.filled_sells,
+                                            &market.last_price,
+                                            &market.symbol
+                                           ]).expect("FAILED TO EXEC UPDATE MARKETS");
+    }
+    transaction.commit().expect("Failed to commit buffered market update transaction.");
+}
+
+pub fn insert_buffered_trades(trades: &Vec<Trade>, conn: &mut Client) {
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    let query_string = "\
+INSERT INTO ExecutedTrades
+(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
+
+    for trade in trades {
+        transaction.execute(query_string, &[&trade.symbol,
+                                            &trade.action,
+                                            &trade.price,
+                                            &trade.filled_oid,
+                                            &trade.filled_uid,
+                                            &trade.filler_oid,
+                                            &trade.filler_uid,
+                                            &trade.exchanged,
+                                            &trade.execution_time,
+                                           ]).expect("FAILED TO EXEC INSERT TRADES");
+    }
+    transaction.commit().expect("Failed to commit buffered trade insert transaction.");
 }
 

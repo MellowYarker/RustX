@@ -20,10 +20,13 @@ use postgres::{Client, NoTls};
 fn main() {
     let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
     let mut users    = Users::new();     // All our users are stored here.
-    let mut buffers  = BufferCollection::new(20000, 20000); // In-memory buffers that will write to DB.
+    let mut buffers  = BufferCollection::new(200000, 200000); // In-memory buffers that will write to DB.
 
     let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+    // let mut testing_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls)
+    //     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
     println!("Connected to database.");
 
@@ -79,9 +82,8 @@ fn main() {
             }
 
             // Make sure our buffer states are accurate.
-            println!("{:?}", buffers);
-            // TODO: PER-7 write our markets to DB too.
-            if buffers.update_buffer_states() {
+            // if buffers.update_buffer_states(&exchange, &mut testing_client) {
+            if buffers.update_buffer_states(&exchange, &mut client) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in exchange.statistics.iter_mut() {
@@ -89,6 +91,8 @@ fn main() {
                 }
             }
         }
+        // buffers.flush_on_shutdown(&exchange, &mut testing_client);
+        buffers.flush_on_shutdown(&exchange, &mut client);
     } else {
         // User interface version
         println!("
@@ -119,8 +123,8 @@ fn main() {
             parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
 
             // Make sure our buffer states are accurate.
-            // TODO: PER-7 write our markets to DB too.
-            if buffers.update_buffer_states() {
+            // if buffers.update_buffer_states(&exchange, &mut testing_client) {
+            if buffers.update_buffer_states(&exchange, &mut client) {
                 users.reset_users_modified();
 
                 // Set all market stats modified to false
@@ -128,6 +132,7 @@ fn main() {
                     entry.modified = false;
                 }
             }
+            // TODO: Flush Buffers on SigINT, SigKill
         }
     }
 }
