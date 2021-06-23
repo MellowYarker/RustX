@@ -400,6 +400,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *       orders are stored in the temp buffer but not the db or program data structures,
      *       then there's no way for us to know about the state of the users account.
      *
+     * TODO: Since we now cache, lets change the return type to be less complicated.
+     *
      * For internal use only.
      *
      * If the account is in the cache (active user), we return a mutable ref to the user.
