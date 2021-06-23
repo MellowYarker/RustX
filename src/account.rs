@@ -408,10 +408,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *
      * This means we do not update the cache!
      */
-    // fn _get_mut(&mut self, username: &String, conn: &mut Client) -> (Option<&mut UserAccount>, Option<UserAccount>){
     fn _get_mut(&mut self, username: &String, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
-            // Some(account) => return (Some(account), None),
             Some(_) => (),
             None => {
                 let mut account = match database::read_account(username, conn) {
@@ -422,10 +420,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 // Fill this account with the pending orders
                 database::read_account_pending_orders(&mut account, conn);
                 self.cache_user(account);
-                // return (None, Some(account));
             }
         }
-        // return (self.users.get_mut(username), None);
         return self.users.get_mut(username).unwrap();
     }
 

@@ -374,7 +374,7 @@ impl Exchange {
      **/
     pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
 
-        let mut test_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls).expect("Failed to access test db");
+        // let mut test_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls).expect("Failed to access test db");
 
         let buy = String::from("BUY");
         let sell = String::from("SELL");
@@ -450,7 +450,7 @@ impl Exchange {
                     }
                 }
             }
-            // buffers.update_buffer_states(&self.statistics, conn);
+
             // buffers.update_buffer_states(&self, &mut test_client);
             if buffers.update_buffer_states(&self, conn) {
                 users.reset_users_modified();
