@@ -330,6 +330,10 @@ We need to flush the Order buffer first!");
             match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
                 Ok(mut account) => {
+                    // TODO: This is an extremely expensive operation.
+                    //       I would rather search all our in-memory markets and pull the data from
+                    //       there.
+
                     // Since our user will be cached, and we are likely to do things with the user.
                     // We should probably make sure the in-mem pending orders are consistent w/ the database!
                     database::read_account_pending_orders(&mut account, conn);
