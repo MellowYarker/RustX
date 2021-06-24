@@ -163,6 +163,12 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
                 return Err(());
             }
         },
+        "exit" => {
+            if words.len() == 1 {
+                return Ok(Request::ExitReq)
+            }
+            return Err(());
+        }
         // request instructions
         "help" => {
             print_instructions();
@@ -316,6 +322,11 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 },
                 _ => println!("Sorry I do not know how to handle that account request.")
             }
+        },
+        Request::ExitReq => {
+            println!("Initiating graceful shutdown...");
+            buffers.flush_on_shutdown(exchange, conn);
+            println!("Buffers flushed, shutdown complete.");
         }
     }
 }

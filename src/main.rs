@@ -1,5 +1,6 @@
 #[macro_use] extern crate random_number;
 extern crate chrono;
+extern crate ctrlc;
 
 pub mod exchange;
 pub mod parser;
@@ -59,6 +60,15 @@ fn main() {
         }
     };
 
+    // Set sigINT/sigTERM handlers
+    // TODO: Apparently we can't just read the mut ref.
+    //       Rustc thinks that the buffer, exchange, and client may go out of scope
+    //       before this thread triggers the flush, which is absurd.
+    ctrlc::set_handler(|| {
+        println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
+        // buffers.flush_on_shutdown(&exchange, &mut client);
+    }).expect("Error setting Ctrl-C handler");
+
     // Read from file mode
     if !argument.interactive {
         for line in argument.reader.unwrap().lines() {
@@ -91,6 +101,7 @@ fn main() {
                 }
             }
         }
+        // TODO: What if we call ctrl + c here, will compiler be happy?
         // buffers.flush_on_shutdown(&exchange, &mut testing_client);
         buffers.flush_on_shutdown(&exchange, &mut client);
     } else {
@@ -118,6 +129,13 @@ fn main() {
                 Err(_)  => continue
             };
 
+            if let Request::ExitReq = request {
+                // Our input has been validated, and we can now
+                // attempt to service the request.
+                parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+                return;
+            }
+
             // Our input has been validated, and we can now
             // attempt to service the request.
             parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
@@ -132,7 +150,6 @@ fn main() {
                     entry.modified = false;
                 }
             }
-            // TODO: Flush Buffers on SigINT, SigKill
         }
     }
 }
@@ -162,6 +179,7 @@ pub fn print_instructions() {
     println!("\t\tEx: simulate 300 500 10000\t<---- Simulates 10000 random buy/sell orders in 500 markets, with 300 random users.\n");
 
     println!("\tAccount Requests: account create/show USERNAME PASSWORD");
-    println!("\t\tEx: account create bigMoney notHashed\n");
+    println!("\t\tEx: account create bigMoney notHashed\n\n");
+    println!("\tTo perform a graceful shutdown and update the database, type EXIT.\n");
     println!("\tYou can see these instructions at any point by typing help.");
 }
