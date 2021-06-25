@@ -97,7 +97,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(&mut trades, buffers, conn);
+            users.update_account_orders(&self, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -126,6 +126,32 @@ impl Exchange {
                 Err(PriceError::NoTrades)
             }
         }
+    }
+
+    /* Find all pending orders associated with the user, and store them in their account. */
+    pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
+        // Check all the markets
+        for (symbol, market) in self.live_orders.iter() {
+            // Check all the buy orders of this market
+            for buy in market.buy_orders.iter() {
+                if buy.user_id == user.id {
+                    let pending_market = user.pending_orders.entry(buy.symbol.clone()).or_insert(HashMap::new());
+                    pending_market.insert(buy.order_id, buy.clone());
+
+                }
+            }
+            // Check all the sell orders of this market.
+            for sell_container in market.sell_orders.iter() {
+                let sell = &sell_container.0;
+
+                if sell.user_id == user.id {
+                    let pending_market = user.pending_orders.entry(sell.symbol.clone()).or_insert(HashMap::new());
+                    pending_market.insert(sell.order_id, sell.clone());
+
+                }
+            }
+        }
+
     }
 
     // Print a market
@@ -441,7 +467,7 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string(), conn) {
+            if let Ok(account) =  users.authenticate(username, &"password".to_string(), &self, conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
                 if account.validate_order(&order) {

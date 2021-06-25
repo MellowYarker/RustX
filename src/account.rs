@@ -1,5 +1,6 @@
 use crate::exchange::requests::{Order, OrderStatus};
 use crate::exchange::filled::Trade;
+use crate::Exchange;
 
 use std::collections::HashMap;
 
@@ -170,7 +171,7 @@ impl Users {
 
     pub fn new() -> Self {
         // TODO: How do we want to decide what the max # users is?
-        let max_users = 1000;
+        let max_users = 5000;
         let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
         let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
         Users {
@@ -311,7 +312,7 @@ We need to flush the Order buffer first!");
      *       for the frontend to hold on to?
      *
      */
-    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
+    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &Exchange, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
         match self.auth_check_cache(username, password) {
@@ -334,7 +335,8 @@ We need to flush the Order buffer first!");
 
                     // Since our user will be cached, and we are likely to do things with the user.
                     // We should probably make sure the in-mem pending orders are consistent w/ the database!
-                    database::read_account_pending_orders(&mut account, conn);
+                    // database::read_account_pending_orders(&mut account, conn);
+                    exchange.fetch_account_pending_orders(&mut account);
                     self.cache_user(account);
                 },
                 Err(e) => return Err(e)
@@ -408,7 +410,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      *
      * This means we do not update the cache!
      */
-    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> &mut UserAccount {
+    fn _get_mut(&mut self, username: &String, exchange: &Exchange, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
             Some(_) => (),
             None => {
@@ -418,7 +420,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 };
 
                 // Fill this account with the pending orders
-                database::read_account_pending_orders(&mut account, conn);
+                // database::read_account_pending_orders(&mut account, conn);
+                exchange.fetch_account_pending_orders(&mut account);
                 self.cache_user(account);
             }
         }
@@ -460,7 +463,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
+    fn update_single_user(&mut self, exchange: &Exchange, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -482,7 +485,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         };
 
         // Gives a mutable reference to cache.
-        let account = self._get_mut(&username, conn);
+        let account = self._get_mut(&username, exchange, conn);
 
         // PER-6 set account modified to true because we're modifying their orders.
         account.modified = true;
@@ -570,7 +573,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
+    pub fn update_account_orders(&mut self, exchange: &Exchange, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
@@ -590,10 +593,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(buffers, *user_id, new_trades, false, conn);
+            self.update_single_user(exchange, buffers, *user_id, new_trades, false, conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(buffers, trades[0].filler_uid, &trades, true, conn);
+        self.update_single_user(exchange, buffers, trades[0].filler_uid, &trades, true, conn);
 
         // TODO: PER-6/7?
         //       We don't want to perform this database update anymore.
