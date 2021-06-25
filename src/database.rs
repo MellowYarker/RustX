@@ -331,7 +331,7 @@ pub fn read_user_by_id(id: i32, conn: &mut Client) -> Result<String, postgres::e
  **/
 pub fn read_account_pending_orders(user: &mut UserAccount, conn: &mut Client) {
     let query_string = "\
-SELECT o.* FROM Orders o, PendingOrders p
+SELECT (o.order_ID, o.symbol, o.action, o.quantity, o.filled, o.price, o.user_ID) FROM Orders o, PendingOrders p
 WHERE o.order_ID = p.order_ID
 AND o.user_ID =
     (SELECT ID FROM Account WHERE Account.username = $1)
