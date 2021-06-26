@@ -331,7 +331,7 @@ pub fn read_user_by_id(id: i32, conn: &mut Client) -> Result<String, postgres::e
  **/
 pub fn read_account_pending_orders(user: &mut UserAccount, conn: &mut Client) {
     let query_string = "\
-SELECT o.* FROM Orders o, PendingOrders p
+SELECT (o.order_ID, o.symbol, o.action, o.quantity, o.filled, o.price, o.user_ID) FROM Orders o, PendingOrders p
 WHERE o.order_ID = p.order_ID
 AND o.user_ID =
     (SELECT ID FROM Account WHERE Account.username = $1)
@@ -373,7 +373,7 @@ SELECT * FROM ExecutedTrades e
 WHERE
 e.filled_UID = (SELECT ID FROM Account WHERE Account.username = $1) OR
 e.filler_UID = (SELECT ID FROM Account WHERE Account.username = $1)
-ORDER BY e.filled_OID;";
+ORDER BY e.execution_time;";
 
     for row in conn.query(query_string, &[&user.username]).expect("Query to fetch executed trades failed!") {
         let symbol:     &str = row.get(0);
@@ -488,226 +488,6 @@ pub fn write_insert_new_account(account: &UserAccount, conn: &mut Client) -> Res
     }
 }
 
-/* Writes to the database.
- * This function inserts an order to the Orders table,
- * and will insert it to the PendingOrders table if the
- * order is not COMPLETE.
- **/
-pub fn write_insert_order(order: &Order, conn: &mut Client) {
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
-    let query_string = "\
-INSERT INTO Orders
-(order_ID, symbol, action, quantity, filled, price, user_ID, status, time_placed)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
-
-    let status: &str;
-    let mut add_to_pending = false;
-
-    match order.status {
-        OrderStatus::COMPLETE => status = "COMPLETE",
-        OrderStatus::PENDING => {
-            status = "PENDING";
-            add_to_pending = true;
-        },
-        OrderStatus::CANCELLED => panic!("Got unexpected orderstatus for newly placed order!")
-    }
-
-    let now = Utc::now();
-
-    if let Err(e) = transaction.execute(query_string, &[ &order.order_id,
-                                                &order.symbol,
-                                                &order.action,
-                                                &order.quantity,
-                                                &order.filled,
-                                                &order.price,
-                                                &order.user_id,
-                                                &status.to_string(),
-                                                &now
-    ]) {
-        eprintln!("{:?}", e);
-        panic!("Something went wrong with the Order Insert query!");
-    };
-
-    if add_to_pending {
-        let query_string = "INSERT INTO PendingOrders VALUES ($1);";
-        if let Err(e) = transaction.execute(query_string, &[&order.order_id]) {
-            eprintln!("{:?}", e);
-            panic!("Something went wrong with the PendingOrder Insert query!");
-        };
-    }
-
-    // Update the exchange total orders
-    let query_string: &str;
-    if order.order_id == 1 {
-        query_string = "INSERT INTO ExchangeStats VALUES ($1);";
-    } else {
-        query_string = "UPDATE ExchangeStats set total_orders=$1;";
-    };
-
-    if let Err(e) = transaction.execute(query_string, &[&order.order_id]) {
-        eprintln!("{:?}", e);
-        panic!("Something went wrong with the exchange total orders update query!");
-    };
-
-    let query_string: String;
-    match &order.action[..] {
-        "BUY" => query_string = format!["UPDATE Markets set total_{}=total_{} + 1 where symbol=$1;", "buys", "buys"],
-        "SELL" => query_string = format!["UPDATE Markets set total_{}=total_{} + 1 where symbol=$1;", "sells", "sells"],
-        _ => panic!("We should never get here.")
-    }
-
-    if let Err(e) = transaction.execute(query_string.as_str(), &[&order.symbol]) {
-        eprintln!("{:?}", e);
-        panic!("Something went wrong with the Market total count update query!");
-    };
-
-    if let Err(e) = transaction.commit() {
-        eprintln!("{:?}", e);
-        panic!("The transaction that updates several tables when we get a new order failed!");
-    };
-}
-
-/* Update a market's statistics with the current data. */
-pub fn write_update_market_stats(stats: &SecStat, conn: &mut Client) {
-    let query_string = "\
-UPDATE Markets
-SET (total_buys, total_sells, filled_buys, filled_sells, latest_price) =
-($1, $2, $3, $4, $5)
-WHERE Markets.symbol = $6;";
-
-    if let Err(e) = conn.execute(query_string, &[&stats.total_buys,
-                                                 &stats.total_sells,
-                                                 &stats.filled_buys,
-                                                 &stats.filled_sells,
-                                                 &stats.last_price.unwrap(),
-                                                 &stats.symbol
-    ]) {
-        eprintln!("{:?}", e);
-        panic!("Something went wrong with the Market Stats Update query!");
-    };
-}
-
-/* Inserts the trades in the vector into ExecutedTrades table. */
-pub fn write_insert_trades(trades: &Vec<Trade>, conn: &mut Client) {
-
-    let now = Utc::now();
-
-    let mut query_string = String::from("\
-INSERT INTO ExecutedTrades
-(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
-VALUES \n");
-
-    for trade in trades.iter() {
-        query_string.push_str(format!["('{}', '{}', {}, {}, {}, {}, {}, {}, '{}'),\n",
-                                    trade.symbol,
-                                    trade.action,
-                                    trade.price,
-                                    trade.filled_oid,
-                                    trade.filled_uid,
-                                    trade.filler_oid,
-                                    trade.filler_uid,
-                                    trade.exchanged,
-                                    now
-                                     ].as_str());
-    }
-
-    query_string.pop();
-    query_string.pop();
-
-    query_string.push(';');
-
-    if let Err(e) = conn.execute(query_string.as_str(), &[]) {
-        eprintln!("{:?}", e);
-        panic!("Insert Trades query failed!");
-    }
-
-}
-
-/* Updates the Orders table's filled column for orders that
- * have been partially filled.
- **/
-pub fn write_partial_update_filled_counts(updated_orders: &Vec<(i32, i32)>, conn: &mut Client) {
-
-    let now = Utc::now();
-
-    let mut query_string = String::new();
-    for order in updated_orders {
-        query_string.push_str(format!["UPDATE Orders set filled={}, time_updated='{}' WHERE order_id={};\n", order.0, now, order.1].as_str());
-    }
-
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction to update Order filled counts");
-
-    if let Err(e) = transaction.execute(query_string.as_str(), &[]) {
-        eprintln!("{:?}", e);
-        panic!("Filled Counts Update query failed!");
-    }
-
-    if let Err(e) = transaction.commit() {
-        eprintln!("{:?}", e);
-        panic!("Failed to commit transaction to update Order filled counts!");
-    }
-}
-
-/* This is a multipurpose function:
- *     - We DELETE orders from the PendingOrders table,
- *       then simultaneously UPDATE the order in the Orders table.
- *
- * The status of the order is determined by the calling function,
- * and depending on the status, we set the amount filled.
- *
- * There are 2 possible status updates:
- *      - COMPLETE  => filled = quantity
- *      - CANCELLED => filled = filled
- *
- * Disclaimer:
- *      I could move the Orders table UPDATE to write_update_filled_counts,
- *      but I think it's important to atomically update both tables in this case.
- **/
-pub fn write_delete_pending_orders(order_ids: &Vec<i32>, conn: &mut Client, set_status: OrderStatus) {
-
-    let now = Utc::now();
-
-    // TODO: We can run this all in parallel!
-    // Determine if order completed or cancelled
-    let filled: &str;
-    if let OrderStatus::COMPLETE = set_status {
-        filled = "quantity";
-    } else {
-        filled = "filled";
-    }
-    let mut delete_query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN (");
-    let mut update_query_string = format!["UPDATE Orders SET status='{:?}', filled={}, time_updated='{}' WHERE order_id IN (", set_status, filled, now];
-
-    for order in order_ids.iter() {
-        delete_query_string.push_str(format!["{}, ", order].as_str());
-        update_query_string.push_str(format!["{}, ", order].as_str());
-    }
-
-    // Remove last ", "
-    for _ in 0..2 {
-        delete_query_string.pop();
-        update_query_string.pop();
-    }
-
-    delete_query_string.push_str(");");
-    update_query_string.push_str(");");
-
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction in delete_pending_orders");
-    if let Err(e) = transaction.execute(delete_query_string.as_str(), &[]) {
-        eprintln!("{:?}", e);
-        panic!("PendingOrders Delete query failed!", );
-    }
-
-    if let Err(e) = transaction.execute(update_query_string.as_str(), &[]) {
-        eprintln!("{:?}", e);
-        panic!("Order Status Update query failed!", );
-    }
-
-    if let Err(e) = transaction.commit() {
-        eprintln!("{:?}", e);
-        panic!("Failed to commit transaction in write_delete_pending_orders");
-    }
-}
 
 /* Returns true if the market exists in our database, false otherwise. */
 pub fn read_market_exists(market: &String, conn: &mut Client) -> bool {
@@ -753,7 +533,7 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
  *                                  NEW API - Buffered Database                                       *
  ******************************************************************************************************/
 // TODO: For all, try to construct a large query string and execute just once.
-//       I have a sneaking suspicion that calling exectute() n times where n is large
+//       I have a sneaking suspicion that calling execute() n times where n is large
 //       is less performant, even within a transaction, than a single execute() with a large query.
 pub fn insert_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 

@@ -19,7 +19,7 @@ pub use crate::database;
 
 pub use crate::buffer::BufferCollection;
 
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 // Error types for price information.
 pub enum PriceError {
@@ -60,10 +60,6 @@ impl Exchange {
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
         stats.modified = true;
 
-        // Write the newly placed order to the Orders table.
-        // If Order isn't complete, adds to pending as well.
-        // database::write_insert_order(order, conn); // PER-7 TEST
-
         // Update the counters and the price
         match &order.action[..] {
             "BUY" => {
@@ -83,8 +79,6 @@ impl Exchange {
             new_price = Some(price);
             // Updates in-mem data
             stats.update_market_stats(price, &trades);
-            // Updates database
-            // database::write_update_market_stats(stats, conn); // PER-7 TEST
 
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
@@ -97,7 +91,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(&mut trades, buffers, conn);
+            users.update_account_orders(self, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -126,6 +120,32 @@ impl Exchange {
                 Err(PriceError::NoTrades)
             }
         }
+    }
+
+    /* Find all pending orders associated with the user, and store them in their account. */
+    pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
+        // Check all the markets
+        for (_symbol, market) in self.live_orders.iter() {
+            // Check all the buy orders of this market
+            for buy in market.buy_orders.iter() {
+                if buy.user_id == user.id {
+                    let pending_market = user.pending_orders.entry(buy.symbol.clone()).or_insert(HashMap::new());
+                    pending_market.insert(buy.order_id, buy.clone());
+
+                }
+            }
+            // Check all the sell orders of this market.
+            for sell_container in market.sell_orders.iter() {
+                let sell = &sell_container.0;
+
+                if sell.user_id == user.id {
+                    let pending_market = user.pending_orders.entry(sell.symbol.clone()).or_insert(HashMap::new());
+                    pending_market.insert(sell.order_id, sell.clone());
+
+                }
+            }
+        }
+
     }
 
     // Print a market
@@ -347,10 +367,6 @@ impl Exchange {
                     let order = Order::from_cancelled(order_to_cancel.order_id);
                     buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, false); // PER-5 update
 
-                    // TODO: PER-6/7
-                    //       Remove this db write eventually, we just write the buffers.
-                    // database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED); // PER-7 TEST
-
                     return Ok(());
 
                 } else {
@@ -441,7 +457,7 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string(), conn) {
+            if let Ok(account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
                 if account.validate_order(&order) {

@@ -10,3 +10,4 @@ edition = "2018"
 random-number = "0.1.6"
 postgres = { version = "0.19.1", features = ["with-chrono-0_4"] }
 chrono = "0.4"
+ctrlc = { version = "3.1.9", features = ["termination"] }

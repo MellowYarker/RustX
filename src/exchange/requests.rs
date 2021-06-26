@@ -161,4 +161,5 @@ pub enum Request {
     SimReq(Simulation),
     UserReq(UserAccount, String), // Account followed by action
     UpgradeDbReq(String, String, String), // db_name, username, password. Only admin can call this
+    ExitReq,
 }
