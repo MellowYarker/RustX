@@ -329,13 +329,7 @@ We need to flush the Order buffer first!");
             match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
                 Ok(mut account) => {
-                    // TODO: This is an extremely expensive operation.
-                    //       I would rather search all our in-memory markets and pull the data from
-                    //       there.
-
-                    // Since our user will be cached, and we are likely to do things with the user.
-                    // We should probably make sure the in-mem pending orders are consistent w/ the database!
-                    // database::read_account_pending_orders(&mut account, conn);
+                    // Get this users pending orders.
                     exchange.fetch_account_pending_orders(&mut account);
                     self.cache_user(account);
                 },
@@ -419,8 +413,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                     Err(_) => panic!("Something went wrong while trying to get a user from the database!")
                 };
 
-                // Fill this account with the pending orders
-                // database::read_account_pending_orders(&mut account, conn);
                 exchange.fetch_account_pending_orders(&mut account);
                 self.cache_user(account);
             }
@@ -550,24 +542,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         for i in &entries_to_remove {
             market.remove(&i);
         }
-
-        // TODO - Performance Opportunity:
-        //      - If we can perform both these updates in parallel, i.e execute the functions in
-        //        separate threads, on different DB connections, that might be a good idea!
-
-        // TODO - PER-6/7?
-        //        We don't want to write this pending delete to the DB anymore
-        // Remove all the completed orders from the database's pending table
-        // and update Orders table.
-        // PER-7 TEST
-        // if entries_to_remove.len() > 0 {
-        //     database::write_delete_pending_orders(&entries_to_remove, conn, OrderStatus::COMPLETE);
-        // }
-
-        // TODO - PER-6/7?
-        //        We don't want to perform this partial order DB update anymore.
-        // For each trade that partially filled an order, update `filled` in Orders table.
-        // database::write_partial_update_filled_counts(&update_partial_filled_vec, conn); // PER-7 TEST
     }
 
     /* Given a vector of Trades, update all the accounts
@@ -597,11 +571,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         }
         // Case 2: update account who placed order that filled others.
         self.update_single_user(exchange, buffers, trades[0].filler_uid, &trades, true, conn);
-
-        // TODO: PER-6/7?
-        //       We don't want to perform this database update anymore.
-        // For each trade, insert into ExecutedTrades table.
-        // database::write_insert_trades(trades, conn); // PER-7 TEST
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update

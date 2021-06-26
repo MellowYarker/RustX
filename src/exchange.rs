@@ -60,10 +60,6 @@ impl Exchange {
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
         stats.modified = true;
 
-        // Write the newly placed order to the Orders table.
-        // If Order isn't complete, adds to pending as well.
-        // database::write_insert_order(order, conn); // PER-7 TEST
-
         // Update the counters and the price
         match &order.action[..] {
             "BUY" => {
@@ -83,8 +79,6 @@ impl Exchange {
             new_price = Some(price);
             // Updates in-mem data
             stats.update_market_stats(price, &trades);
-            // Updates database
-            // database::write_update_market_stats(stats, conn); // PER-7 TEST
 
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
@@ -372,10 +366,6 @@ impl Exchange {
                     // Add this cancellation to the database buffer.
                     let order = Order::from_cancelled(order_to_cancel.order_id);
                     buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, false); // PER-5 update
-
-                    // TODO: PER-6/7
-                    //       Remove this db write eventually, we just write the buffers.
-                    // database::write_delete_pending_orders(&to_remove, conn, OrderStatus::CANCELLED); // PER-7 TEST
 
                     return Ok(());
 
