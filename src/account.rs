@@ -218,7 +218,6 @@ impl Users {
             // Insert to db
             match database::write_insert_new_account(&account, conn) {
                 Ok(()) => {
-                    self.cache_user(account);
                     return Some(self.total);
                 },
                 Err(()) => panic!("Something went wrong while inserting a new user!")
