@@ -373,7 +373,7 @@ SELECT * FROM ExecutedTrades e
 WHERE
 e.filled_UID = (SELECT ID FROM Account WHERE Account.username = $1) OR
 e.filler_UID = (SELECT ID FROM Account WHERE Account.username = $1)
-ORDER BY e.filled_OID;";
+ORDER BY e.execution_time;";
 
     for row in conn.query(query_string, &[&user.username]).expect("Query to fetch executed trades failed!") {
         let symbol:     &str = row.get(0);
