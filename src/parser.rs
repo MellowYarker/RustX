@@ -189,7 +189,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             match &order.action[..] {
                 "BUY" | "SELL" => {
                     // Try to get the account
-                    match users.authenticate(&username, &password, exchange, conn) {
+                    match users.authenticate(&username, &password, exchange, buffers, conn) {
                         Ok(account) => {
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
@@ -211,7 +211,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             }
         },
         Request::CancelReq(order_to_cancel, password) => {
-            match users.authenticate(&(order_to_cancel.username), &password, exchange, conn) {
+            match users.authenticate(&(order_to_cancel.username), &password, exchange, buffers, conn) {
                 Ok(_) => {
                     match exchange.cancel_order(&order_to_cancel, users, buffers, conn) {
                         Ok(_) => println!("Order successfully cancelled."),
@@ -270,7 +270,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
         Request::UpgradeDbReq(db_name, username, password) => {
             // First, lets authenticate to make sure we're the admin.
             if username.as_str() == "admin" {
-                match users.authenticate(&username, &password, exchange, conn) {
+                match users.authenticate(&username, &password, exchange, buffers, conn) {
                     Ok(_) => {
                         println!("Please enter the file path to the configuration:");
                         let mut file_path = String::new();
@@ -313,7 +313,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                    }
                 },
                 "show" => {
-                    match users.authenticate(&account.username, &account.password, exchange, conn) {
+                    match users.authenticate(&account.username, &account.password, exchange, buffers, conn) {
                         Ok(_) => {
                             users.print_user(&account.username, true);
                         },

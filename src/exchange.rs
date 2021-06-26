@@ -19,7 +19,7 @@ pub use crate::database;
 
 pub use crate::buffer::BufferCollection;
 
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 // Error types for price information.
 pub enum PriceError {
@@ -91,7 +91,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(&self, &mut trades, buffers, conn);
+            users.update_account_orders(self, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -457,7 +457,7 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string(), &self, conn) {
+            if let Ok(account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
                 if account.validate_order(&order) {

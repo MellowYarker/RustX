@@ -16,7 +16,7 @@ pub enum AuthError<'a> {
 }
 
 // Stores data about a user
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UserAccount {
     pub username: String,
     pub password: String,
@@ -236,19 +236,27 @@ impl Users {
         }
     }
 
-    /* Stores a user in the programs cache. */
-    fn cache_user(&mut self, account: UserAccount) {
+    /* Stores a user in the programs cache.
+     * If a user is successfully added to the cache, we return true, otherwise, return false.
+     * */
+    fn cache_user(&mut self, account: UserAccount) -> bool {
         // Evict a user if we don't have space.
-        if self.users.len() == self.users.capacity() {
-            self.evict_user();
-            // TODO: We have to trigger a flush of the DB buffers.
+        let capacity: f64 = self.users.capacity() as f64;
+        let count: f64 = self.users.len() as f64;
+        if capacity * 0.9 <= count {
+            if !self.evict_user() {
+                return false;
+            }
         }
 
         self.id_map.insert(account.id.unwrap(), account.username.clone());
         self.users.insert(account.username.clone(), account);
+        return true;
     }
 
     /* Evict a user from the cache.
+     * If a user was evicted successfully, return true, else return false.
+     *
      * We can only evict users who's modified fields are set to false.
      * This is the only constraint on our cache eviction policy.
      *
@@ -264,7 +272,7 @@ impl Users {
      *
      *  It remains to be seen if a basic cache eviction policy is good enough.
      * */
-    fn evict_user(&mut self) {
+    fn evict_user(&mut self) -> bool {
         // POLICY: Delete first candidate
         //     Itereate over all the entries, once we find one that's not modified, stop
         //     iterating, make note of the key, then delete the entry.
@@ -282,11 +290,10 @@ impl Users {
         if let Some(key) = key_to_evict {
             let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
             self.users.remove(&username);
-        } else {
-            panic!("\
-We tried to evict a user, but all users in the cache are currently modified!
-We need to flush the Order buffer first!");
+            return true;
         }
+        // Failed to evict a user.
+        return false;
     }
 
     /* Checks the user cache*/
@@ -311,7 +318,7 @@ We need to flush the Order buffer first!");
      *       for the frontend to hold on to?
      *
      */
-    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &Exchange, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
+    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
         match self.auth_check_cache(username, password) {
@@ -330,7 +337,17 @@ We need to flush the Order buffer first!");
                 Ok(mut account) => {
                     // Get this users pending orders.
                     exchange.fetch_account_pending_orders(&mut account);
-                    self.cache_user(account);
+                    // If we fail to cache the user, flush the buffers so we can evict users.
+                    if !self.cache_user(account.clone()) {
+                        buffers.force_flush(exchange, conn);
+                        self.reset_users_modified();
+
+                        // Set all market stats modified to false
+                        for (_key, entry) in exchange.statistics.iter_mut() {
+                            entry.modified = false;
+                        }
+                        self.cache_user(account);
+                    }
                 },
                 Err(e) => return Err(e)
             }
@@ -386,24 +403,13 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         return Err(AuthError::BadPassword(Some(err_msg)));
     }
 
-    /* TODO: Some later PR. PER-6?
-     *       Since we're decreasing DB operations, we actually *do* want to cache this
-     *       user. The reasoning is simple: we have to trust the program state at all times.
-     *       If the user isn't cached (their orders too) AND any updates to their
-     *       orders are stored in the temp buffer but not the db or program data structures,
-     *       then there's no way for us to know about the state of the users account.
-     *
-     * TODO: Since we now cache, lets change the return type to be less complicated.
-     *
-     * For internal use only.
+    /* For internal use only.
      *
      * If the account is in the cache (active user), we return a mutable ref to the user.
-     * If the account is in the database, we construct a user, get the pending orders,
+     * If the account is in the database, we construct a user, cache them, get the pending orders,
      * then return the UserAccount to the calling function.
-     *
-     * This means we do not update the cache!
      */
-    fn _get_mut(&mut self, username: &String, exchange: &Exchange, conn: &mut Client) -> &mut UserAccount {
+    fn _get_mut(&mut self, username: &String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
             Some(_) => (),
             None => {
@@ -413,7 +419,18 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 };
 
                 exchange.fetch_account_pending_orders(&mut account);
-                self.cache_user(account);
+                if !self.cache_user(account.clone()) {
+                    // If we fail to evict a user, flush the buffers and try again.
+                    buffers.force_flush(exchange, conn);
+                    self.reset_users_modified();
+
+                    // Set all market stats modified to false
+                    for (_key, entry) in exchange.statistics.iter_mut() {
+                        entry.modified = false;
+                    }
+
+                    self.cache_user(account);
+                }
             }
         }
         return self.users.get_mut(username).unwrap();
@@ -429,7 +446,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             Ok(account) => {
                 println!("\nAccount information for user: {}", account.username);
 
-                let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+                let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
                     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
                 let mut executed_trades: Vec<Trade> = Vec::new();
@@ -454,7 +471,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, exchange: &Exchange, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
+    fn update_single_user(&mut self, exchange: &mut Exchange, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -476,7 +493,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         };
 
         // Gives a mutable reference to cache.
-        let account = self._get_mut(&username, exchange, conn);
+        let account = self._get_mut(&username, exchange, buffers, conn);
 
         // PER-6 set account modified to true because we're modifying their orders.
         account.modified = true;
@@ -546,7 +563,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, exchange: &Exchange, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
+    pub fn update_account_orders(&mut self, exchange: &mut Exchange, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.

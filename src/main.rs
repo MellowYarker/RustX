@@ -23,11 +23,8 @@ fn main() {
     let mut users    = Users::new();     // All our users are stored here.
     let mut buffers  = BufferCollection::new(200000, 200000); // In-memory buffers that will write to DB.
 
-    let mut client = Client::connect("host=localhost user=postgres dbname=mydb", NoTls)
+    let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
-
-    // let mut testing_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls)
-    //     .expect("Failed to connect to Database. Please ensure it is up and running.");
 
     println!("Connected to database.");
 
@@ -66,7 +63,6 @@ fn main() {
     //       before this thread triggers the flush, which is absurd.
     ctrlc::set_handler(|| {
         println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
-        // buffers.flush_on_shutdown(&exchange, &mut client);
     }).expect("Error setting Ctrl-C handler");
 
     // Read from file mode
