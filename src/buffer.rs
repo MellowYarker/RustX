@@ -181,8 +181,8 @@ impl OrderBuffer {
     /* Gives us access to the internal data buffer. */
     pub fn drain_buffer(&mut self) -> hash_map::Drain<'_, i32, DatabaseReadyOrder> {
         match self.state {
-            BufferState::EMPTY => eprintln!("The Order buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => eprintln!("The Order buffer is not full, we can wait before draining."),
+            BufferState::EMPTY => println!("The Order buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => println!("The Order buffer is not full, we can wait before draining."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
@@ -240,9 +240,6 @@ impl OrderBuffer {
     }
 
     fn prepare_for_db_update(&mut self, categorize: &mut TableModCategories) {
-        // TODO: Create a TableModCategories struct, fill it by iterating over the HashMap
-        //       and assigning DatabaseReadyOrder's to the appropriate fields vecs.
-        //
         // TODO: If we want to decrease redundant computation, and increase redundant data
         // replication, we can store Some(symbol) in ALL DatabaseReadyOrder's, then use the
         // update_market field of TableModCategories.
@@ -308,8 +305,8 @@ impl TradeBuffer {
     /* Call this when we want to consume the buffer and write it to the database. */
     pub fn drain_buffer(&mut self) -> vec::Drain<'_, Trade> {
         match self.state {
-            BufferState::EMPTY => eprintln!("The trade buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => eprintln!("The trade buffer is not full, we can wait before draining."),
+            BufferState::EMPTY => println!("The trade buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => println!("The trade buffer is not full, we can wait before draining."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
@@ -357,15 +354,25 @@ impl BufferCollection {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
 
-        // Flush Orders
-        let mut categories = TableModCategories::new();
-        self.buffered_orders.prepare_for_db_update(&mut categories);
-        BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
-        self.buffered_orders.drain_buffer();
+        // Flush Orders if we have any
+        match self.buffered_orders.state {
+            BufferState::FULL | BufferState::NONEMPTY => {
+                let mut categories = TableModCategories::new();
+                self.buffered_orders.prepare_for_db_update(&mut categories);
+                BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+                self.buffered_orders.drain_buffer();
+            },
+            _ => println!("Orders buffer is empty, skipping.")
+        }
 
         // Flush Trades
-        database::insert_buffered_trades(&self.buffered_trades.data, conn);
-        self.buffered_trades.drain_buffer();
+        match self.buffered_trades.state {
+            BufferState::FULL | BufferState::NONEMPTY => {
+                database::insert_buffered_trades(&self.buffered_trades.data, conn);
+                self.buffered_trades.drain_buffer();
+            },
+            _ => println!("Trades buffer is empty, skipping.")
+        }
     }
 
     /* Check our buffer states.
@@ -379,7 +386,7 @@ impl BufferCollection {
         let mut orders_drained = false;
 
         if let BufferState::FULL = self.buffered_orders.state {
-            eprintln!("WARNING: order buffer is full. Write to the database!");
+            println!("WARNING: order buffer is full. Write to the database!");
 
             // Prepare for Order buffer drain
             let mut categories = TableModCategories::new();
@@ -391,16 +398,17 @@ impl BufferCollection {
         };
 
         if let BufferState::FULL = self.buffered_trades.state {
-            eprintln!("WARNING: trade buffer is full. Write to the database!");
-            // -------------------------------------------------------------------
-            // Don't like this, but we have to insert orders before trades bc
-            // trades have a foreign key constraint on order_id.
-            let mut categories = TableModCategories::new();
-            self.buffered_orders.prepare_for_db_update(&mut categories);
-            BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+            println!("WARNING: trade buffer is full. Write to the database!");
 
-            self.buffered_orders.drain_buffer();
-            // -------------------------------------------------------------------
+            // We have to insert orders before trades, since
+            // trades have a foreign key constraint on order_id.
+            if let BufferState::NONEMPTY = self.buffered_orders.state {
+                let mut categories = TableModCategories::new();
+                self.buffered_orders.prepare_for_db_update(&mut categories);
+                BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+
+                self.buffered_orders.drain_buffer();
+            }
 
             database::insert_buffered_trades(&self.buffered_trades.data, conn);
             self.buffered_trades.drain_buffer();
