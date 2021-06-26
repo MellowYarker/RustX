@@ -125,7 +125,7 @@ impl Exchange {
     /* Find all pending orders associated with the user, and store them in their account. */
     pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
         // Check all the markets
-        for (symbol, market) in self.live_orders.iter() {
+        for (_symbol, market) in self.live_orders.iter() {
             // Check all the buy orders of this market
             for buy in market.buy_orders.iter() {
                 if buy.user_id == user.id {
