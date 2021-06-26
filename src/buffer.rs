@@ -408,6 +408,7 @@ impl BufferCollection {
                 BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
 
                 self.buffered_orders.drain_buffer();
+                orders_drained = true;
             }
 
             database::insert_buffered_trades(&self.buffered_trades.data, conn);
