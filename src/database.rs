@@ -357,8 +357,9 @@ ORDER BY o.order_ID;";
                                   order_id,
                                   OrderStatus::PENDING,
                                   user_id);
-        let market = user.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-        market.insert(order.order_id, order);
+        // let market = user.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
+        // market.insert(order.order_id, order);
+        user.pending_orders.insert_order(order);
     }
 }
 
