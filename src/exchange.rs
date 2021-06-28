@@ -55,7 +55,6 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    // fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
     fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, exchange_event: Option<(Vec<Order>, Vec<Trade>)>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
@@ -323,7 +322,6 @@ impl Exchange {
      *       cannot be cancelled.
      * */
     pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) -> Result<(), String>{
-        // if let Ok(account) = users.get(&(order_to_cancel.username), true) {
         if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
 
             // If we don't have the full picture of this users pending orders,
