@@ -539,7 +539,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, exchange: &mut Exchange, buffers: &mut BufferCollection, id: i32, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
+    fn update_single_user(&mut self, exchange: &mut Exchange, buffers: &mut BufferCollection, id: i32, modified_orders: &Vec<Order>, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -598,6 +598,44 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
             // After processing the order, move it to executed trades.
             match account_market.get_mut(&id) {
+                 Some(order) => {
+                    if trade.exchanged == (order.quantity - order.filled) {
+                        // Add/update this completed order in the database buffer.
+                        order.status = OrderStatus::COMPLETE;
+                        order.filled = order.quantity;
+                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
+                        entries_to_remove.push(order.order_id);
+                    } else if !is_filler {
+                        // Don't update the filler's filled count,
+                        // new orders are added to accounts in submit_order_to_market.
+                        order.filled += trade.exchanged;
+
+                        // Add/update this pre-existing pending order to the database buffer.
+                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
+
+                        // Extend the vector of orders we will update
+                        update_partial_filled_vec.push((order.filled, order.order_id));
+                    }
+                 },
+                 // Order not found in users in-mem account, this is because
+                 // the user hasn't placed/cancelled an order recently.
+                 // This is fine, as we can read the order from the modified_orders vector.
+                 None => {
+                     for order in modified_orders.iter() {
+                         if order.order_id == id {
+                             if let OrderStatus::PENDING = order.status {
+                                 account_market.insert(id, order.clone());
+                             }
+                             buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true);
+                             break;
+                         }
+                     }
+                 }
+            }
+
+            /*
+            match account_market.get_mut(&id) {
                 Some(order) => {
                     // order completely filled
                     if trade.exchanged == (order.quantity - order.filled) {
@@ -633,6 +671,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                     //  to check the MARKET's pending orders INSTEAD OF THE ACCOUNT!
                 }
             }
+            */
         }
 
         // Remove any completed orders from the accounts pending orders.
@@ -644,7 +683,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, exchange: &mut Exchange, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
+    pub fn update_account_orders(&mut self, exchange: &mut Exchange, modified_orders: &mut Vec<Order>, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
@@ -664,10 +703,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(exchange, buffers, *user_id, new_trades, false, conn);
+            self.update_single_user(exchange, buffers, *user_id, modified_orders, new_trades, false, conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(exchange, buffers, trades[0].filler_uid, &trades, true, conn);
+        self.update_single_user(exchange, buffers, trades[0].filler_uid, modified_orders, trades, true, conn);
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update

@@ -55,7 +55,8 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
+    // fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, exchange_event: Option<(Vec<Order>, Vec<Trade>)>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
         stats.modified = true;
@@ -74,7 +75,8 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(mut trades) = executed_trades {
+        // if let Some(mut trades) = executed_trades {
+        if let Some((mut modified_orders, mut trades)) = exchange_event {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
             // Updates in-mem data
@@ -91,7 +93,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(self, &mut trades, buffers, conn);
+            users.update_account_orders(self, &mut modified_orders, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -255,7 +257,9 @@ impl Exchange {
         match self.live_orders.get_mut(&order.symbol) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                let trades = market.fill_existing_orders(&mut order);
+                // TODO: Get back a vector of orders that were modified as well!
+                // let trades = market.fill_existing_orders(&mut order);
+                let exchange_event = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
                 // as well as the users account.
@@ -281,7 +285,8 @@ impl Exchange {
                 buffers.buffered_orders.add_unknown_to_order_buffer(&order);
 
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, buffers, trades, conn);
+                // new_price = self.update_state(&order, users, buffers, trades, conn);
+                new_price = self.update_state(&order, users, buffers, exchange_event, conn);
             },
             // The market doesn't exist, create it if found in DB,
             // otherwise the user entered a market that DNE.
