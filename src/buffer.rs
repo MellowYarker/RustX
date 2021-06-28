@@ -426,7 +426,7 @@ impl BufferCollection {
 
         match self.buffered_trades.state {
             BufferState::FULL | BufferState::FORCEFLUSH => {
-                println!("WARNING: trade buffer is full. Write to the database!");
+                println!("WARNING: trade buffer must be flushed. Write to the database!");
 
                 // We have to insert orders before trades, since
                 // trades have a foreign key constraint on order_id.
