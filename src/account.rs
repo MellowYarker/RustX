@@ -76,7 +76,6 @@ impl AccountPendingOrders {
     }
 
     pub fn remove_order(&mut self, symbol: &str, id: i32) {
-        // if let Some(market) = self.get_mut_market(symbol) {
         let market = self.get_mut_market(symbol);
         market.remove(&id);
     }
@@ -88,19 +87,16 @@ pub struct UserAccount {
     pub username: String,
     pub password: String,
     pub id: Option<i32>,
-    // pub pending_orders: HashMap<String, HashMap<i32, Order>>,   // Orders that have not been completely filled.
     pub pending_orders: AccountPendingOrders,
     pub modified: bool  // bool representing whether account has been modified since last batch write to DB
 }
 
 impl UserAccount {
     pub fn from(username: &String, password: &String) -> Self {
-        // let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
         UserAccount {
             username: username.clone(),
             password: password.clone(),
             id: None, // We set this later
-            // pending_orders: placed,
             pending_orders: AccountPendingOrders::new(),
             modified: false,
         }
@@ -108,12 +104,10 @@ impl UserAccount {
 
     /* Used when reading values from database.*/
     pub fn direct(id: i32, username: &str, password: &str) -> Self {
-        // let placed: HashMap<String, HashMap<i32, Order>> = HashMap::new();
         UserAccount {
             username: username.to_string().clone(),
              password: password.to_string().clone(),
             id: Some(id),
-            // pending_orders: placed,
             pending_orders: AccountPendingOrders::new(),
             modified: false,
         }
@@ -148,7 +142,6 @@ You called validate_order on an account with in-complete pending order data.");
         }
 
         match self.pending_orders.view_market(&order.symbol.as_str()) {
-        // match self.pending_orders.get(&order.symbol) {
             // We only care about the market that `order` is being submitted to.
             Some(market) => {
                 for (_, pending) in market.iter() {
@@ -171,10 +164,6 @@ You called validate_order on an account with in-complete pending order data.");
             panic!("Tried to check pending order cache but the account does not have up to date pending orders.");
         }
 
-        // if let Some(market) = self.pending_orders.get(symbol) {
-            // if let Some(order) = market.get(&id) {
-                // return Some(order.action.clone()); // buy or sell
-            // }
         if let Some(order) = self.pending_orders.get_order_in_market(symbol.as_str(), id) {
             return Some(order.action.clone()); // buy or sell
         }
@@ -202,9 +191,6 @@ You called validate_order on an account with in-complete pending order data.");
 
     /* Removes a pending order from an account if it exists. */
     pub fn remove_order_from_account(&mut self, symbol: &String, id: i32) {
-        // if let Some(market) = self.pending_orders.get_mut(symbol) {
-        //     market.remove(&id);
-        // }
         self.pending_orders.remove_order(symbol.as_str(), id);
     }
 }
@@ -235,7 +221,7 @@ impl Users {
 
     pub fn new() -> Self {
         // TODO: How do we want to decide what the max # users is?
-        let max_users = 5000;
+        let max_users = 1000;
         let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
         let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
         Users {
@@ -380,7 +366,6 @@ impl Users {
      *       for the frontend to hold on to?
      *
      */
-    // pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> Result<&UserAccount, AuthError<'a>> {
     pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
@@ -397,9 +382,7 @@ impl Users {
         if cache_miss {
             match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
-                Ok(mut account) => {
-                    // Get this users pending orders.
-                    // exchange.fetch_account_pending_orders(&mut account);
+                Ok(account) => {
                     // If we fail to cache the user, flush the buffers so we can evict users.
                     if !self.cache_user(account.clone()) {
                         buffers.force_flush(exchange, conn);
@@ -476,12 +459,11 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         match self.users.get_mut(username) {
             Some(_) => (),
             None => {
-                let mut account = match database::read_account(username, conn) {
+                let account = match database::read_account(username, conn) {
                     Ok(acc) => acc,
                     Err(_) => panic!("Something went wrong while trying to get a user from the database!")
                 };
 
-                // exchange.fetch_account_pending_orders(&mut account);
                 if !self.cache_user(account.clone()) {
                     // If we fail to evict a user, flush the buffers and try again.
                     buffers.force_flush(exchange, conn);
@@ -520,7 +502,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                 database::read_account_executed_trades(account, &mut executed_trades, &mut client);
 
                 println!("\n\tOrders Awaiting Execution");
-                // for (_, market) in account.pending_orders.iter() {
                 for (_, market) in account.pending_orders.pending.iter() {
                     for (_, order) in market.iter() {
                         println!("\t\t{:?}", order);
@@ -574,13 +555,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         const BUY: &str = "BUY";
         const SELL: &str = "SELL";
 
-        // let account_market = account.pending_orders.entry(trades[0].symbol.clone()).or_insert(HashMap::new());
         let account_market = account.pending_orders.get_mut_market(&trades[0].symbol.as_str());
 
-        // Vector of <Filled, OrderID>, will pass this to database API to structure update.
-        // TODO: Do we still need this?
-        let mut update_partial_filled_vec: Vec<(i32, i32)> = Vec::new();
-
+        // TODO: If we want accurate executed_trades, we will need to store trades in user
+        // accounts (will be inaccurate between database updates).
         for trade in trades.iter() {
             let mut id = trade.filled_oid;
             let mut update_trade = trade.clone();
@@ -613,9 +591,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
                         // Add/update this pre-existing pending order to the database buffer.
                         buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
-
-                        // Extend the vector of orders we will update
-                        update_partial_filled_vec.push((order.filled, order.order_id));
                     }
                  },
                  // Order not found in users in-mem account, this is because
@@ -633,45 +608,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                      }
                  }
             }
-
-            /*
-            match account_market.get_mut(&id) {
-                Some(order) => {
-                    // order completely filled
-                    if trade.exchanged == (order.quantity - order.filled) {
-
-                        // Add/update this completed order in the database buffer.
-                        order.status = OrderStatus::COMPLETE;
-                        order.filled = order.quantity;
-                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
-
-                        entries_to_remove.push(order.order_id);
-                    } else if !is_filler {
-                        // Don't update the filler's filled count,
-                        // new orders are added to accounts in submit_order_to_market.
-                        order.filled += trade.exchanged;
-
-                        // Add/update this pre-existing pending order to the database buffer.
-                        buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
-
-                        // Extend the vector of orders we will update
-                        update_partial_filled_vec.push((order.filled, order.order_id));
-                    }
-                },
-                None => {
-                    println!("Hey we actually got into the other branch, cool beans!");
-                    // TODO PER-9:  In this branch, we should handle orders that are not in the current accounts pending.
-                    //              This probably sounds confusing, but it makes sense given the
-                    //              desired architecture of *only users submitting/canceling orders
-                    //              need to know their pending orders*.
-                    //
-                    //  See, if this current user didn't submit an order, and is just having their
-                    //  order filled, then we don't want to fetch their pending orders (it's
-                    //  expensive!). In that case, we will actually hit this branch, and so we need
-                    //  to check the MARKET's pending orders INSTEAD OF THE ACCOUNT!
-                }
-            }
-            */
         }
 
         // Remove any completed orders from the accounts pending orders.
