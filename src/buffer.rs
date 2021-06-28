@@ -183,7 +183,7 @@ impl OrderBuffer {
         match self.state {
             BufferState::EMPTY => println!("The Order buffer is empty, there is nothing to drain."),
             BufferState::NONEMPTY => println!("The Order buffer is not full, we can wait before draining."),
-            BufferState::FORCEFLUSH => println!("The Order buffer is being forced to flush by an external module."),
+            BufferState::FORCEFLUSH => println!("The Order buffer is being forced to flush."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
@@ -310,7 +310,7 @@ impl TradeBuffer {
         match self.state {
             BufferState::EMPTY => println!("The Trade buffer is empty, there is nothing to drain."),
             BufferState::NONEMPTY => println!("The Trade buffer is not full, we can wait before draining."),
-            BufferState::FORCEFLUSH => println!("The Trade buffer is being forced to flush by an external module."),
+            BufferState::FORCEFLUSH => println!("The Trade buffer is being forced to flush."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
@@ -368,9 +368,15 @@ impl BufferCollection {
         // Flush Orders if we have any
         match self.buffered_orders.state {
             BufferState::FULL | BufferState::NONEMPTY | BufferState::FORCEFLUSH => {
+                self.buffered_orders.state = BufferState::FORCEFLUSH; // Unnecessary, but more accurately describes state.
+                println!("Consuming order buffer...");
+
                 let mut categories = TableModCategories::new();
                 self.buffered_orders.prepare_for_db_update(&mut categories);
+
+                println!("Updating database...\n");
                 BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+
                 self.buffered_orders.drain_buffer();
             },
             _ => println!("Orders buffer is empty, skipping.")
@@ -379,7 +385,11 @@ impl BufferCollection {
         // Flush Trades
         match self.buffered_trades.state {
             BufferState::FULL | BufferState::NONEMPTY | BufferState::FORCEFLUSH => {
+                self.buffered_trades.state = BufferState::FORCEFLUSH;
+
+                println!("Consuming trade buffer and updating database...\n");
                 database::insert_buffered_trades(&self.buffered_trades.data, conn);
+
                 self.buffered_trades.drain_buffer();
             },
             _ => println!("Trades buffer is empty, skipping.")
@@ -410,23 +420,10 @@ impl BufferCollection {
             },
             _ => ()
         }
-        /*
-        if let BufferState::FULL = self.buffered_orders.state {
-            println!("WARNING: order buffer is full. Write to the database!");
-
-            // Prepare for Order buffer drain
-            let mut categories = TableModCategories::new();
-            self.buffered_orders.prepare_for_db_update(&mut categories);
-            BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
-
-            self.buffered_orders.drain_buffer();
-            orders_drained = true;
-        };
-        */
 
         match self.buffered_trades.state {
             BufferState::FULL | BufferState::FORCEFLUSH => {
-                println!("WARNING: trade buffer is full. Write to the database!");
+                println!("WARNING: trade buffer must be flushed. Write to the database!");
 
                 // We have to insert orders before trades, since
                 // trades have a foreign key constraint on order_id.

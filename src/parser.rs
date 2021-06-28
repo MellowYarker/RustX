@@ -190,9 +190,17 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                 "BUY" | "SELL" => {
                     // Try to get the account
                     match users.authenticate(&username, &password, exchange, buffers, conn) {
-                        Ok(account) => {
+                        Ok(mut account) => {
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
+
+                            // If we don't have the full picture of this users pending orders,
+                            // get it. This is so we can ensure they don't fill their own order,
+                            // and accurately represent their account state.
+                            if !account.pending_orders.is_complete {
+                                exchange.fetch_account_pending_orders(&mut account);
+                            }
+
                             if account.validate_order(&order) {
                                 if let Err(e) =  &exchange.submit_order_to_market(users, buffers, order.clone(), &username, true, conn) {
                                     eprintln!("{}", e);

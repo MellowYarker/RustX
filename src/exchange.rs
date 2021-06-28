@@ -55,7 +55,7 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, executed_trades: Option<Vec<Trade>>, conn: &mut Client) -> Option<f64> {
+    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, exchange_event: Option<(Vec<Order>, Vec<Trade>)>, conn: &mut Client) -> Option<f64> {
 
         let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
         stats.modified = true;
@@ -74,7 +74,7 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(mut trades) = executed_trades {
+        if let Some((mut modified_orders, mut trades)) = exchange_event {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
             // Updates in-mem data
@@ -91,7 +91,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(self, &mut trades, buffers, conn);
+            users.update_account_orders(self, &mut modified_orders, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -124,14 +124,16 @@ impl Exchange {
 
     /* Find all pending orders associated with the user, and store them in their account. */
     pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
+        if user.pending_orders.is_complete {
+            panic!("Hey coder genius. You're calling fetch_account_pending_orders on an account that is up-to-date.");
+        }
+
         // Check all the markets
         for (_symbol, market) in self.live_orders.iter() {
             // Check all the buy orders of this market
             for buy in market.buy_orders.iter() {
                 if buy.user_id == user.id {
-                    let pending_market = user.pending_orders.entry(buy.symbol.clone()).or_insert(HashMap::new());
-                    pending_market.insert(buy.order_id, buy.clone());
-
+                    user.pending_orders.insert_order(buy.clone());
                 }
             }
             // Check all the sell orders of this market.
@@ -139,12 +141,12 @@ impl Exchange {
                 let sell = &sell_container.0;
 
                 if sell.user_id == user.id {
-                    let pending_market = user.pending_orders.entry(sell.symbol.clone()).or_insert(HashMap::new());
-                    pending_market.insert(sell.order_id, sell.clone());
-
+                    user.pending_orders.insert_order(sell.clone());
                 }
             }
         }
+        // updates some account state data
+        user.pending_orders.update_after_fetch();
 
     }
 
@@ -229,6 +231,7 @@ impl Exchange {
                 return Err("".to_string());
             }
         };
+
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
 
@@ -242,7 +245,7 @@ impl Exchange {
         match self.live_orders.get_mut(&order.symbol) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                let trades = market.fill_existing_orders(&mut order);
+                let exchange_event = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
                 // as well as the users account.
@@ -259,15 +262,14 @@ impl Exchange {
                     }
 
                     // Add to this accounts pending orders.
-                    let current_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-                    current_market.insert(order.order_id, order.clone());
+                    account.pending_orders.insert_order(order.clone());
                 }
 
                 // Add this new order to the database buffer
                 buffers.buffered_orders.add_unknown_to_order_buffer(&order);
 
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, buffers, trades, conn);
+                new_price = self.update_state(&order, users, buffers, exchange_event, conn);
             },
             // The market doesn't exist, create it if found in DB,
             // otherwise the user entered a market that DNE.
@@ -294,8 +296,7 @@ impl Exchange {
                     self.live_orders.insert(order.symbol.clone(), new_market);
 
                     // Add the symbol name and order to this accounts pending orders.
-                    let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-                    new_account_market.insert(order.order_id, order.clone());
+                    account.pending_orders.insert_order(order.clone());
 
                     // Add this new order to the database buffer
                     buffers.buffered_orders.add_unknown_to_order_buffer(&order);
@@ -321,7 +322,15 @@ impl Exchange {
      *       cannot be cancelled.
      * */
     pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) -> Result<(), String>{
-        if let Ok(account) = users.get(&(order_to_cancel.username), true) {
+        if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
+
+            // If we don't have the full picture of this users pending orders,
+            // get it. This is so we can ensure they don't fill their own order,
+            // and accurately represent their account state.
+            if !account.pending_orders.is_complete {
+                self.fetch_account_pending_orders(account);
+            }
+
             // 1. Ensure the order belongs to the user
             if let Some(action) = account.user_placed_pending_order(&order_to_cancel.symbol, order_to_cancel.order_id, conn) {
                 if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
@@ -457,9 +466,15 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
+            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
+
+                // If we have an incomplete view of this account, get full view.
+                if !account.pending_orders.is_complete {
+                    self.fetch_account_pending_orders(&mut account);
+                }
+
                 if account.validate_order(&order) {
                     if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
                         eprintln!("{}", e);
