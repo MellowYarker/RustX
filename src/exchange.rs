@@ -75,7 +75,6 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        // if let Some(mut trades) = executed_trades {
         if let Some((mut modified_orders, mut trades)) = exchange_event {
             let price = trades[trades.len() - 1].price;
             new_price = Some(price);
@@ -136,11 +135,6 @@ impl Exchange {
             for buy in market.buy_orders.iter() {
                 if buy.user_id == user.id {
                     user.pending_orders.insert_order(buy.clone());
-                    // let pending_market = user.pending_orders.entry(buy.symbol.clone()).or_insert(HashMap::new());
-
-                    // let pending_market = user.pending_orders.get_mut_market(&buy.symbol.as_str());
-                    // pending_market.insert(buy.order_id, buy.clone());
-
                 }
             }
             // Check all the sell orders of this market.
@@ -149,11 +143,6 @@ impl Exchange {
 
                 if sell.user_id == user.id {
                     user.pending_orders.insert_order(sell.clone());
-                    // let pending_market = user.pending_orders.entry(sell.symbol.clone()).or_insert(HashMap::new());
-
-                    // let pending_market = user.pending_orders.get_mut_market(&buy.symbol.as_str());
-                    // pending_market.insert(sell.order_id, sell.clone());
-
                 }
             }
         }
@@ -257,8 +246,6 @@ impl Exchange {
         match self.live_orders.get_mut(&order.symbol) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                // TODO: Get back a vector of orders that were modified as well!
-                // let trades = market.fill_existing_orders(&mut order);
                 let exchange_event = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
@@ -277,15 +264,12 @@ impl Exchange {
 
                     // Add to this accounts pending orders.
                     account.pending_orders.insert_order(order.clone());
-                    // let current_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-                    // current_market.insert(order.order_id, order.clone());
                 }
 
                 // Add this new order to the database buffer
                 buffers.buffered_orders.add_unknown_to_order_buffer(&order);
 
                 // Update the state of the exchange.
-                // new_price = self.update_state(&order, users, buffers, trades, conn);
                 new_price = self.update_state(&order, users, buffers, exchange_event, conn);
             },
             // The market doesn't exist, create it if found in DB,
@@ -314,8 +298,6 @@ impl Exchange {
 
                     // Add the symbol name and order to this accounts pending orders.
                     account.pending_orders.insert_order(order.clone());
-                    // let new_account_market = account.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-                    // new_account_market.insert(order.order_id, order.clone());
 
                     // Add this new order to the database buffer
                     buffers.buffered_orders.add_unknown_to_order_buffer(&order);

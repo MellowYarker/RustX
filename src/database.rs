@@ -128,7 +128,6 @@ ORDER BY (o.symbol, o.action)", &[]).expect("Something went wrong in the query."
         let price: f64 = row.get(5);
         let user_id: i32 = row.get(6);
         // No need to get status, it's obviously pending.
-        // let status: &str = row.get(7);
 
         let order = Order::direct(action, symbol, quantity, filled, price, order_id, OrderStatus::PENDING, user_id);
         // Add the order we found to the market.
@@ -344,9 +343,8 @@ ORDER BY o.order_ID;";
         let filled:         i32  = row.get(4);
         let price:          f64  = row.get(5);
         let user_id:        i32  = row.get(6);
-        // let status:         i32  = row.get(7); // <---- unnecessary, we know it's pending
-        // let time_placed:    i32  = row.get(7); // <---- TODO
-        // let time_updated:   i32  = row.get(7); // <---- TODO
+        // let time_placed:    i32  = row.get(8); // <---- TODO
+        // let time_updated:   i32  = row.get(9); // <---- TODO
 
         // We will just re-insert everything.
         let order = Order::direct(action,
@@ -357,8 +355,7 @@ ORDER BY o.order_ID;";
                                   order_id,
                                   OrderStatus::PENDING,
                                   user_id);
-        // let market = user.pending_orders.entry(order.symbol.clone()).or_insert(HashMap::new());
-        // market.insert(order.order_id, order);
+
         user.pending_orders.insert_order(order);
     }
 }
@@ -531,7 +528,7 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
 
 
 /******************************************************************************************************
- *                                  NEW API - Buffered Database                                       *
+ *                                         Buffered Writes API                                        *
  ******************************************************************************************************/
 // TODO: For all, try to construct a large query string and execute just once.
 //       I have a sneaking suspicion that calling execute() n times where n is large
