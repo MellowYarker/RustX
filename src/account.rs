@@ -119,22 +119,29 @@ impl UserAccount {
         return self.id.unwrap();
     }
 
-    /* TODO: This has a bug. We return true even if the order theoretically cannot be filled.
-     *       Ex. The func doesn't consider if other orders (not belonging to user) would fill
-     *           the current order first.
-     *
-     * Returns true if this order will not fill any pending orders placed by
-     * this user. Otherwise, returns false.
+    /*
+     * Returns (true, None) if this order *CANNOT* fill any pending orders placed by
+     * this user. Otherwise, returns (false, Some(Order)) where Order is the pending order
+     * that would be filled.
      *
      * Consider the following scenario:
      *  -   user places buy order for 10 shares of X at $10/share.
      *          - the order remains on the market and is not filled.
      *  -   later, the same user places a sell order for 3 shares of X at n <= $10/share.
-     *  -   the new order will fill their old order, which is probably undesirable,
-     *      or even illegal.
+     *  -   if there are no higher buy orders, the sell will fill the original buy.
+     *  -   That is, the user will fill their own order (Trade with themselves).
+     *
+     *  We *could* check for this as we make trades, but I think it's better to make the user
+     *  explicitly resubmit their order at a valid price.
+     *
+     * Note that this function can prevent an order from being placed, even if at the moment it was
+     * placed, other pending orders were present that would prevent the new order from filling an
+     * old one. This is because the program may be multi-threaded at some point, and so we cannot
+     * be sure of order execution in extremely small time frames. I'm effectively preventing future
+     * bugs.
      *
      **/
-    pub fn validate_order(&self, order: &Order) -> bool {
+    pub fn validate_order(&self, order: &Order) -> (bool, Option<Order>) {
         if !self.pending_orders.is_complete {
             panic!("\
 Well, you've done it again.
@@ -144,19 +151,30 @@ You called validate_order on an account with in-complete pending order data.");
         match self.pending_orders.view_market(&order.symbol.as_str()) {
             // We only care about the market that `order` is being submitted to.
             Some(market) => {
-                for (_, pending) in market.iter() {
-                    // If this order will fill a pending order that this account placed:
-                    if  (order.action.ne(&pending.action)) &&
-                        ((order.action.as_str() == "BUY"  && pending.price <= order.price) ||
-                        (order.action.as_str() == "SELL" && order.price <= pending.price))
-                    {
-                        return false;
-                    }
+                let candidates = market.values().filter(|candidate| order.action.ne(&candidate.action));
+                match order.action.as_str() {
+                    "BUY" => {
+                        let result = candidates.min_by(|x, y| x.price.partial_cmp(&y.price).expect("Tried to compare NaN!"));
+                        if let Some(lowest_offer) = result {
+                            if lowest_offer.price <= order.price {
+                                return (false, Some(lowest_offer.clone()));
+                            }
+                        }
+                    },
+                    "SELL" => {
+                        let result = candidates.max_by(|x, y| x.price.partial_cmp(&y.price).expect("Tried to compare Nan!"));
+                        if let Some(highest_bid) = result {
+                            if order.price <= highest_bid.price {
+                                return (false, Some(highest_bid.clone()));
+                            }
+                        }
+                    },
+                    _ => ()
                 }
             },
             None => ()
         }
-        return true;
+        return (true, None);
     }
 
     fn check_pending_order_cache(&self, symbol: &String, id: i32) -> Option<String> {

@@ -201,14 +201,18 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                                 exchange.fetch_account_pending_orders(&mut account);
                             }
 
-                            if account.validate_order(&order) {
+                            let (validated, obstruction) = account.validate_order(&order);
+                            if validated {
                                 if let Err(e) =  &exchange.submit_order_to_market(users, buffers, order.clone(), &username, true, conn) {
                                     eprintln!("{}", e);
                                 } else {
                                     &exchange.show_market(&order.symbol);
                                 }
                             } else {
-                                eprintln!("Order could not be placed. This order would fill one of your currently pending orders!");
+                                let obstruction = obstruction.unwrap();
+                                eprintln!("\
+The order could not be placed. You have a pending order in ${} that could potentially be filled by the order you just requested.
+Please change the price of your order so that it cannot fill the following pending order:\n\t{:?}", obstruction.symbol, obstruction);
                             }
                         },
                         Err(e) => Users::print_auth_error(e)
