@@ -326,8 +326,11 @@ Please change the price of your order so that it cannot fill the following pendi
                 },
                 "show" => {
                     match users.authenticate(&account.username, &account.password, exchange, buffers, conn) {
-                        Ok(_) => {
-                            users.print_user(&account.username, true);
+                        Ok(acc) => {
+                            if !acc.pending_orders.is_complete {
+                                exchange.fetch_account_pending_orders(acc);
+                            }
+                            &acc.print_user(conn);
                         },
                         Err(e) => Users::print_auth_error(e)
                     }

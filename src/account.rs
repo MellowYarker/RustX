@@ -4,7 +4,7 @@ use crate::Exchange;
 
 use std::collections::HashMap;
 
-use postgres::{Client, NoTls};
+use postgres::Client;
 use crate::database;
 
 use crate::buffer::BufferCollection;
@@ -210,6 +210,40 @@ You called validate_order on an account with in-complete pending order data.");
     /* Removes a pending order from an account if it exists. */
     pub fn remove_order_from_account(&mut self, symbol: &String, id: i32) {
         self.pending_orders.remove_order(symbol.as_str(), id);
+    }
+
+    /* Prints the account information of this user
+     * if their account view is up to date.
+     **/
+    pub fn print_user(&self, conn: &mut Client) {
+        if !self.pending_orders.is_complete {
+            panic!("Tried to print_user who doesn't have complete pending order info!");
+        }
+
+        println!("\nAccount information for user: {}", self.username);
+
+        let mut executed_trades: Vec<Trade> = Vec::new();
+        database::read_account_executed_trades(self, &mut executed_trades, conn);
+
+        if !self.pending_orders.pending.is_empty() {
+            println!("\n\tOrders Awaiting Execution");
+            for (_, market) in self.pending_orders.pending.iter() {
+                for (_, order) in market.iter() {
+                    println!("\t\t{:?}", order);
+                }
+            }
+        } else {
+            println!("\n\t No Orders awaiting Execution");
+        }
+        if executed_trades.len() > 0 {
+            println!("\n\tExecuted Trades");
+            for order in executed_trades.iter() {
+                println!("\t\t{:?}", order);
+            }
+        } else {
+            println!("\n\tNo Executed Trades to show");
+        }
+        println!("\n");
     }
 }
 
@@ -497,42 +531,6 @@ Be sure to call authenticate() before trying to get a reference to a user!")
             }
         }
         return self.users.get_mut(username).unwrap();
-    }
-
-    /* TODO: This is very likley outdated
-     * Prints the account information of this user if:
-     *  - the account exists and
-     *  - the password is correct for this user
-     */
-    pub fn print_user(&mut self, username: &String, authenticated: bool) {
-        match self.get_mut(username, authenticated) {
-            Ok(account) => {
-                if !account.pending_orders.is_complete {
-                    panic!("Tried to print_user who doesn't have complete pending order info!");
-                }
-
-                println!("\nAccount information for user: {}", account.username);
-
-                let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
-                    .expect("Failed to connect to Database. Please ensure it is up and running.");
-
-                let mut executed_trades: Vec<Trade> = Vec::new();
-                database::read_account_executed_trades(account, &mut executed_trades, &mut client);
-
-                println!("\n\tOrders Awaiting Execution");
-                for (_, market) in account.pending_orders.pending.iter() {
-                    for (_, order) in market.iter() {
-                        println!("\t\t{:?}", order);
-                    }
-                }
-                println!("\n\tExecuted Trades");
-                for order in executed_trades.iter() {
-                    println!("\t\t{:?}", order);
-                }
-                println!("\n");
-            },
-            Err(e) => Users::print_auth_error(e)
-        }
     }
 
     /* Update this users pending_orders, and the Orders table.
