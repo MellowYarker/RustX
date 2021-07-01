@@ -1,7 +1,7 @@
 use postgres::{Client, NoTls};
 use chrono::{Utc, DateTime, FixedOffset};
 
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::convert::TryFrom;
 
@@ -323,10 +323,10 @@ pub fn read_user_by_id(id: i32, conn: &mut Client) -> Result<String, postgres::e
     }
 }
 
-/* TODO: Order inserts by time executed!
- * TODO: Use a prepared statement!
- * Read the pending orders that belong to this user
- * into their account.
+/* Read the pending orders that belong to this user into their account.
+ * This is currently not in use, however, if we only store a subset
+ * of market info in the in-mem markets, we will have to call this
+ * to get the full view of an account (in, say, print_user).
  **/
 pub fn read_account_pending_orders(user: &mut UserAccount, conn: &mut Client) {
     let query_string = "\
@@ -361,9 +361,7 @@ ORDER BY o.order_ID;";
 }
 
 
-/* TODO: Order inserts by time executed!
- * Get this accounts executed trades from the database.
- **/
+/* Get this accounts executed trades from the database. */
 pub fn read_account_executed_trades(user: &UserAccount, executed_trades: &mut Vec<Trade>, conn: &mut Client) {
     // First, lets get trades where we had our order filled.
     let query_string = "\
@@ -444,7 +442,10 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
     return Some(trades);
 }
 
-/* TODO: Untested, not sure even how to test this.
+/* TODO: Doesn't get called ever, since we have a perfect market view.
+ *       If we cap the number of orders visible to a market in the program,
+ *       keeping the rest in the DB, then we may trigger this code.
+ *
  * Returns Some(action) if the user owns this pending order, else None. */
 pub fn read_match_pending_order(user_id: i32, order_id: i32, conn: &mut Client) -> Option<String> {
     let result = conn.query("\
@@ -532,7 +533,7 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
  ******************************************************************************************************/
 // TODO: For all, try to construct a large query string and execute just once.
 //       I have a sneaking suspicion that calling execute() n times where n is large
-//       is less performant, even within a transaction, than a single execute() with a large query.
+//       is less performant, even within a transaction, than a single execute() with multiple rows.
 pub fn insert_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
@@ -543,26 +544,37 @@ INSERT INTO Orders
 (order_ID, symbol, action, quantity, filled, price, user_ID, status, time_placed, time_updated)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
 
+    let statement = match transaction.prepare(&query_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to insert new orders to database!");
+        }
+    };
+
     for order in orders {
 
         let status: String = format!["{:?}", order.status.unwrap()];
 
-        transaction.execute(query_string, &[&order.order_id,
-                                     &order.symbol,
-                                     &order.action,
-                                     &order.quantity,
-                                     &order.filled,
-                                     &order.price,
-                                     &order.user_id,
-                                     &status,
-                                     &order.time_placed,
-                                     &order.time_updated
-                                    ]).expect("FAILED TO EXEC INSERT ORDERS");
+        transaction.execute(&statement, &[ &order.order_id,
+                                          &order.symbol,
+                                          &order.action,
+                                          &order.quantity,
+                                          &order.filled,
+                                          &order.price,
+                                          &order.user_id,
+                                          &status,
+                                          &order.time_placed,
+                                          &order.time_updated
+                                         ]).expect("FAILED TO EXEC INSERT ORDERS");
     }
 
     transaction.commit().expect("Failed to commit buffered order insert transaction.");
 }
 
+/* Unlike the other write functions, this one cannot use prepared statements,
+ * since we are unsure which fields are actually being modified.
+ **/
 pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
@@ -592,7 +604,6 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
             panic!("Something went wrong with the buffered order update statement.");
         };
     }
-    // TODO: Figure out way to construct the partial updates.
     transaction.commit().expect("Failed to commit buffered order update transaction.");
 }
 
@@ -603,8 +614,16 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 INSERT INTO PendingOrders
 VALUES ($1);";
 
+    let statement = match transaction.prepare(&query_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to insert new orders to database!");
+        }
+    };
+
     for order in pending {
-        transaction.execute(query_string, &[&order]).expect("FAILED TO EXEC INSERT PENDING");
+        transaction.execute(&statement, &[&order]).expect("FAILED TO EXEC INSERT PENDING");
     }
 
     transaction.commit().expect("Failed to commit buffered pending order insert transaction.");
@@ -616,8 +635,16 @@ pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 DELETE FROM PendingOrders
 WHERE order_id=$1;";
 
+    let statement = match transaction.prepare(&query_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to insert new orders to database!");
+        }
+    };
+
     for order in pending {
-        transaction.execute(query_string, &[&order]).expect("FAILED TO EXEC DELETE PENDING");
+        transaction.execute(&statement, &[&order]).expect("FAILED TO EXEC DELETE PENDING");
     }
     transaction.commit().expect("Failed to commit buffered pending order delete transaction.");
 }
@@ -647,14 +674,22 @@ SET (total_buys, total_sells, filled_buys, filled_sells, latest_price) =
 ($1, $2, $3, $4, $5)
 WHERE Markets.symbol = $6;";
 
+    let statement = match transaction.prepare(&query_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to insert new orders to database!");
+        }
+    };
+
     for market in markets {
-        transaction.execute(query_string, &[&market.total_buys,
+        transaction.execute(&statement, &[  &market.total_buys,
                                             &market.total_sells,
                                             &market.filled_buys,
                                             &market.filled_sells,
                                             &market.last_price,
                                             &market.symbol
-                                           ]).expect("FAILED TO EXEC UPDATE MARKETS");
+                                         ]).expect("FAILED TO EXEC UPDATE MARKETS");
     }
     transaction.commit().expect("Failed to commit buffered market update transaction.");
 }
@@ -667,8 +702,16 @@ INSERT INTO ExecutedTrades
 (symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
 
+    let statement = match transaction.prepare(&query_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to insert new orders to database!");
+        }
+    };
+
     for trade in trades {
-        transaction.execute(query_string, &[&trade.symbol,
+        transaction.execute(&statement, &[  &trade.symbol,
                                             &trade.action,
                                             &trade.price,
                                             &trade.filled_oid,
@@ -677,7 +720,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
                                             &trade.filler_uid,
                                             &trade.exchanged,
                                             &trade.execution_time,
-                                           ]).expect("FAILED TO EXEC INSERT TRADES");
+                                         ]).expect("FAILED TO EXEC INSERT TRADES");
     }
     transaction.commit().expect("Failed to commit buffered trade insert transaction.");
 }

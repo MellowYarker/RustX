@@ -45,7 +45,7 @@ impl Order {
         // Truncate price to 2 decimal places
         let price = f64::trunc(price  * 100.0) / 100.0;
 
-        // TODO: Need to include order status and time placed/updated.
+        // TODO: Do we need to include time placed/updated?
         Order {
             action: action.to_string().clone(),
             symbol: symbol.to_string().clone(),
@@ -114,7 +114,6 @@ impl PartialEq for Order {
 
 impl Eq for Order { }
 // Non-orders requests like price of a security,
-// TODO: number of buy or sell orders in a market, etc.
 pub struct InfoRequest {
     pub action: String,
     pub symbol: String

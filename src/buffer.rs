@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 
 use chrono::{Local, DateTime};
@@ -232,13 +233,23 @@ impl OrderBuffer {
      * pending.
      **/
     pub fn add_or_update_entry_in_order_buffer(&mut self, order: &Order, update_filled: bool) {
-        // TODO: we should use vacant/occupied, then on vacant, check buffer state for FULL.
-        let entry = self.data.entry(order.order_id).or_insert(DatabaseReadyOrder::new());
+        let entry = match self.data.entry(order.order_id) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                if let BufferState::FULL = self.state {
+                    panic!("\
+Attempted to add an order to a full Order buffer!
+Be sure to clear the buffer well before it reaches capacity!");
+                }
+                entry.insert(DatabaseReadyOrder::new())
+            }
+        };
+
         entry.update_ready_order(order, update_filled);
 
         if let BufferState::EMPTY = self.state {
             self.state = BufferState::NONEMPTY;
-        }
+        };
     }
 
     fn prepare_for_db_update(&mut self, categorize: &mut TableModCategories) {
