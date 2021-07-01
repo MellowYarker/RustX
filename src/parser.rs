@@ -92,12 +92,29 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Order
         "buy" | "sell" => {
             if let 6 = words.len() {
-                // Note that we do not provide an order ID (arg 4 is None).
+                let quantity = match words[2].to_string().trim().parse::<i32>() {
+                    Ok(quant) => quant,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter an integer number of shares!");
+                        return Err(());
+                    }
+                };
+
+                let price = match words[3].to_string().trim().parse::<f64>() {
+                    Ok(price) => price,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter a floating point price!");
+                        return Err(());
+                    }
+                };
+                // Note that we do not provide an order ID (arg is None).
                 // This value actually gets set later.
                 let order = Order::from( words[0].to_string().to_uppercase(),
                                          words[1].to_string().to_uppercase(),
-                                         words[2].to_string().trim().parse::<i32>().expect("Please enter an integer number of shares!"),// TODO we shouldn't panic here
-                                         words[3].to_string().trim().parse::<f64>().expect("Please enter a floating point price!"),     // TODO we shouldn't panic here
+                                         quantity,
+                                         price,
                                          OrderStatus::PENDING,
                                          None
                                        );
@@ -114,9 +131,17 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         },
         "cancel" => {
             if let 5 = words.len() {
+                let order_id = match words[2].to_string().trim().parse::<i32>() {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter an integer order_id");
+                        return Err(());
+                    }
+                };
                 let req = CancelOrder {
                     symbol: words[1].to_string().to_uppercase(),
-                    order_id: words[2].to_string().trim().parse::<i32>().expect("Please enter an integer order id"), // TODO we shouldn't panic here.
+                    order_id: order_id,
                     username: words[3].to_string()
                 };
 
@@ -151,13 +176,36 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
         // Simulate a market for n time steps
         "simulate" => {
             if let 4 = words.len() {
-                // TODO: We shouldn't panic here, just write to stderr...
-                let req: Simulation = Simulation::from( words[0].to_string(),
-                                                        words[1].to_string().trim().parse::<u32>().expect("Please enter an integer number of traders!"),
-                                                        words[2].to_string().trim().parse::<u32>().expect("Please enter an integer number of markets!"),
-                                                        words[3].to_string().trim().parse::<u32>().expect("Please enter an integer number of time steps!")
-                                                      );
+                let trader_count = match words[1].to_string().trim().parse::<u32>() {
+                    Ok(count) => count,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter an integer number of traders!");
+                        return Err(());
+                    }
+                };
+
+                let market_count = match words[2].to_string().trim().parse::<u32>() {
+                    Ok(count) => count,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter an integer number of markets!");
+                        return Err(());
+                    }
+                };
+
+                let time_step_count = match words[3].to_string().trim().parse::<u32>() {
+                    Ok(count) => count,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        eprintln!("Please enter an integer number of time steps!");
+                        return Err(());
+                    }
+                };
+
+                let req: Simulation = Simulation::from( words[0].to_string(), trader_count, market_count, time_step_count);
                 return Ok(Request::SimReq(req));
+
             } else {
                 malformed_req(&words[0], "sim");
                 return Err(());
