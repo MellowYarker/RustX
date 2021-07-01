@@ -21,7 +21,7 @@ use postgres::{Client, NoTls};
 fn main() {
     let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
     let mut users    = Users::new();     // All our users are stored here.
-    let mut buffers  = BufferCollection::new(200000, 200000); // In-memory buffers that will write to DB.
+    let mut buffers  = BufferCollection::new(200000, 200000); // In-memory buffers that will batch write to DB.
 
     let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
@@ -31,21 +31,14 @@ fn main() {
     // Reads total # users
     users.direct_update_total(&mut client);
 
-    /* TODO
-     *  We need to populate our exchange with the relevant data from the database.
-     *  Data we care about includes:
-     *      - Top N buys and sells in each market
-     *      - Current statistics for every market
-     * */
+    /* TODO: Top N buys and sells in each market, rather than all.
+     *       This decreases the amount of RAM, increases the computation speed.
+     **/
     println!("Getting markets.");
-    // Fill the pending orders of the markets
-    database::populate_exchange_markets(&mut exchange, &mut client);
-    // Fill the statistics for each market
-    database::populate_market_statistics(&mut exchange, &mut client);
-    // Fill the statistics for the exchange
-    database::populate_exchange_statistics(&mut exchange, &mut client);
-    // Fill the has_trades map for the exchange
-    database::populate_has_trades(&mut exchange, &mut client);
+    database::populate_exchange_markets(&mut exchange, &mut client);    // Fill the pending orders of the markets
+    database::populate_market_statistics(&mut exchange, &mut client);   // Fill the statistics for each market
+    database::populate_exchange_statistics(&mut exchange, &mut client); // Fill the statistics for the exchange
+    database::populate_has_trades(&mut exchange, &mut client);          // Fill the has_trades map for the exchange
 
     println!("Populated users, markets, and statistics.");
 
@@ -60,7 +53,7 @@ fn main() {
     // Set sigINT/sigTERM handlers
     // TODO: Apparently we can't just read the mut ref.
     //       Rustc thinks that the buffer, exchange, and client may go out of scope
-    //       before this thread triggers the flush, which is absurd.
+    //       before this thread triggers the flush.
     ctrlc::set_handler(|| {
         println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
     }).expect("Error setting Ctrl-C handler");
@@ -79,16 +72,14 @@ fn main() {
                         }
                     };
 
-                    // Our input has been validated, and we can now
-                    // attempt to service the request.
                     println!("Servicing Request: {}", raw);
+                    // Our input has been validated. We can now attempt to service the request.
                     parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
                 },
                 Err(_) => return
             }
 
             // Make sure our buffer states are accurate.
-            // if buffers.update_buffer_states(&exchange, &mut testing_client) {
             if buffers.update_buffer_states(&exchange, &mut client) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
@@ -97,8 +88,7 @@ fn main() {
                 }
             }
         }
-        // TODO: What if we call ctrl + c here, will compiler be happy?
-        // buffers.flush_on_shutdown(&exchange, &mut testing_client);
+
         buffers.flush_on_shutdown(&exchange, &mut client);
     } else {
         // User interface version
@@ -125,19 +115,16 @@ fn main() {
                 Err(_)  => continue
             };
 
+            // If we got an exit request, service it an exit.
             if let Request::ExitReq = request {
-                // Our input has been validated, and we can now
-                // attempt to service the request.
                 parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
                 return;
             }
 
-            // Our input has been validated, and we can now
-            // attempt to service the request.
+            // Our input has been validated. We can now attempt to service the request.
             parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
 
             // Make sure our buffer states are accurate.
-            // if buffers.update_buffer_states(&exchange, &mut testing_client) {
             if buffers.update_buffer_states(&exchange, &mut client) {
                 users.reset_users_modified();
 

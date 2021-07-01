@@ -233,7 +233,7 @@ You called validate_order on an account with in-complete pending order data.");
                 }
             }
         } else {
-            println!("\n\t No Orders awaiting Execution");
+            println!("\n\tNo Orders awaiting Execution");
         }
         if executed_trades.len() > 0 {
             println!("\n\tExecuted Trades");
