@@ -1,7 +1,7 @@
 use postgres::{Client, NoTls};
 use chrono::{Utc, DateTime, FixedOffset};
 
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::convert::TryFrom;
 
