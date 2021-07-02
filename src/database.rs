@@ -716,8 +716,56 @@ WHERE Markets.symbol = $6;";
 }
 
 pub fn insert_buffered_trades(trades: &Vec<Trade>, conn: &mut Client) {
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    let mut queries: Vec<String> = Vec::new();
+    let query_string = String::from("INSERT INTO ExecutedTrades
+(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
+VALUES ");
+    queries.push(query_string.clone());
 
+    let mut counter = 0;
+    let cap = 1000; // we do 1000 rows per query
+    let mut index = 0;
+
+    for trade in trades {
+        if counter < cap {
+            queries[index].push_str(&format!["('{}', '{}', {}, {}, {}, {}, {}, {}, '{}'),\n",  trade.symbol,
+                                                                                               trade.action,
+                                                                                               trade.price,
+                                                                                               trade.filled_oid,
+                                                                                               trade.filled_uid,
+                                                                                               trade.filler_oid,
+                                                                                               trade.filler_uid,
+                                                                                               trade.exchanged,
+                                                                                               trade.execution_time].as_str());
+        } else {
+            // 1. Terminate the current query
+            queries[index].pop();
+            queries[index].pop();
+            queries[index].push(';');
+            // 2 Update counters
+            index += 1;
+            counter = 0;
+            // 3. Start new query
+            queries.push(query_string.clone());
+            queries[index].push_str(&format!["('{}', '{}', {}, {}, {}, {}, {}, {}, '{}'),\n",  trade.symbol,
+                                                                                               trade.action,
+                                                                                               trade.price,
+                                                                                               trade.filled_oid,
+                                                                                               trade.filled_uid,
+                                                                                               trade.filler_oid,
+                                                                                               trade.filler_uid,
+                                                                                               trade.exchanged,
+                                                                                               trade.execution_time].as_str());
+        }
+        counter += 1;
+    }
+
+    queries[index].pop();
+    queries[index].pop();
+    queries[index].push(';');
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    /*
     let query_string = "\
 INSERT INTO ExecutedTrades
 (symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
@@ -730,7 +778,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
             panic!("Failed to insert new orders to database!");
         }
     };
+    */
 
+    for query in &queries {
+        if let Err(e) = transaction.execute(query.as_str(), &[]) {
+            eprintln!("{}", e);
+            eprintln!("{}", query);
+            panic!("Failed to exec insert ExecutedTrades.");
+
+        }
+    }
+    /*
     for trade in trades {
         transaction.execute(&statement, &[  &trade.symbol,
                                             &trade.action,
@@ -743,6 +801,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
                                             &trade.execution_time,
                                          ]).expect("FAILED TO EXEC INSERT TRADES");
     }
+    */
     transaction.commit().expect("Failed to commit buffered trade insert transaction.");
 }
 
