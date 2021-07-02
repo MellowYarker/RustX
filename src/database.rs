@@ -1,5 +1,6 @@
 use postgres::{Client, NoTls};
 use chrono::{Utc, DateTime, FixedOffset};
+use std::time::Instant;
 
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
@@ -536,6 +537,9 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
 //       is less performant, even within a transaction, than a single execute() with multiple rows.
 pub fn insert_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
+    let start = Instant::now();
+    // TIMING
+    let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
     // Everything is to be updated
@@ -570,13 +574,27 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
     }
 
     transaction.commit().expect("Failed to commit buffered order insert transaction.");
+    let query_exec_time = query_exec_time.elapsed().as_millis();
+    let end = start.elapsed().as_millis();
+    println!("Insert New Order Speed\
+\tQuery Build Time Elapsed: DNE
+\tQuery Exec Time Elapsed: {}
+\tTotal Time Elapsed: {}
+\tTotal Items Inserted: {}
+", query_exec_time, end, orders.len());
+
 }
+
 
 /* Unlike the other write functions, this one cannot use prepared statements,
  * since we are unsure which fields are actually being modified.
  **/
 pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
+    let start = Instant::now();
+
+    // TIMING
+    let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
     for order in orders {
@@ -605,16 +623,31 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
         };
     }
     transaction.commit().expect("Failed to commit buffered order update transaction.");
+    let query_exec_time = query_exec_time.elapsed().as_millis();
+    let end = start.elapsed().as_millis();
+    println!("Update Known Order Speed\
+\tQuery Build Time Elapsed: DNE
+\tQuery Exec Time Elapsed: {}
+\tTotal Time Elapsed: {}
+\tTotal Items Updated: {}
+", query_exec_time, end, orders.len());
 }
 
+
 pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
+    // TIMING
+    let start = Instant::now();
+
     let mut queries: Vec<String> = Vec::new();
     let query_string = String::from("INSERT INTO PendingOrders (order_id) VALUES ");
     queries.push(query_string.clone());
 
     let mut counter = 0;
-    let cap = 1000; // we do 1000 rows per query
+    let cap = 10000; // we do 1000 rows per query
     let mut index = 0;
+
+    // TIMING
+    let query_build_time = Instant::now();
 
     for order in pending {
         if counter < cap {
@@ -638,6 +671,9 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     queries[index].pop();
     queries[index].push(';');
 
+    let query_build_time = query_build_time.elapsed().as_millis();
+
+    let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     // Execute all the queries.
     for query in &queries {
@@ -648,27 +684,82 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
         }
     }
     transaction.commit().expect("Failed to commit buffered pending order insert transaction.");
+    let query_exec_time = query_exec_time.elapsed().as_millis();
+    let end = start.elapsed().as_millis();
+
+    println!("Insert Pending Speed (n = 10000)\
+\tQuery Build Time Elapsed: {}
+\tQuery Exec Time Elapsed: {}
+\tTotal Time Elapsed: {}
+\tTotal Items Inserted: {}
+", query_build_time, query_exec_time, end, pending.len());
 }
+
 
 pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
-    let query_string = "\
-DELETE FROM PendingOrders
-WHERE order_id=$1;";
+    let start = Instant::now();
+//////////////////////////////////
 
-    let statement = match transaction.prepare(&query_string) {
-        Ok(stmt) => stmt,
-        Err(e) => {
-            eprintln!("{}", e);
-            panic!("Failed to insert new orders to database!");
-        }
-    };
+    let query_build_time = Instant::now();
+    let mut queries: Vec<String> = Vec::new();
+    let query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN ( ");
+    queries.push(query_string.clone());
+
+    let mut counter = 0;
+    let cap = 1000; // we do 1000 rows per query
+    let mut index = 0;
+
+    // TIMING
+    let query_build_time = Instant::now();
 
     for order in pending {
-        transaction.execute(&statement, &[&order]).expect("FAILED TO EXEC DELETE PENDING");
+        if counter < cap {
+            queries[index].push_str(&format!["{}, ", order].as_str());
+        } else {
+            // 1. Terminate the current query
+            queries[index].pop();
+            queries[index].pop();
+            queries[index].push_str(");");
+            // 2 Update counters
+            index += 1;
+            counter = 0;
+            // 3. Start new query
+            queries.push(query_string.clone());
+            queries[index].push_str(&format!["{}, ", order].as_str());
+        }
+        counter += 1;
+    }
+
+    queries[index].pop();
+    queries[index].pop();
+    queries[index].push_str(");");
+    let query_build_time = query_build_time.elapsed().as_millis();
+/////////////////////////////////
+
+    let query_exec_time = Instant::now();
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+
+    for query in &queries {
+        if let Err(e) = transaction.execute(query.as_str(), &[]) {
+            eprintln!("{}", e);
+            eprintln!("{}", query);
+            panic!("Failed to exec delete pending query.");
+        }
     }
     transaction.commit().expect("Failed to commit buffered pending order delete transaction.");
+
+    let query_exec_time = query_exec_time.elapsed().as_millis();
+    let end = start.elapsed().as_millis();
+
+    println!("Delete Pending Speed (n = 1000)\
+\tQuery Build Time Elapsed: {}
+\tQuery Exec Time Elapsed: {}
+\tTotal Time Elapsed: {}
+\tTotal Items Deleted: {}
+", query_build_time, query_exec_time, end, pending.len());
+
 }
+
 
 pub fn update_total_orders(total_orders: i32, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
@@ -686,6 +777,7 @@ UPDATE SET total_orders=$1;";
 
     transaction.commit().expect("Failed to commit buffered total order update transaction.");
 }
+
 
 pub fn update_buffered_markets(markets: &Vec<&SecStat>, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
@@ -715,7 +807,11 @@ WHERE Markets.symbol = $6;";
     transaction.commit().expect("Failed to commit buffered market update transaction.");
 }
 
+
 pub fn insert_buffered_trades(trades: &Vec<Trade>, conn: &mut Client) {
+    // TIMING
+    let start = Instant::now();
+
     let mut queries: Vec<String> = Vec::new();
     let query_string = String::from("INSERT INTO ExecutedTrades
 (symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
@@ -723,8 +819,11 @@ VALUES ");
     queries.push(query_string.clone());
 
     let mut counter = 0;
-    let cap = 1000; // we do 1000 rows per query
+    let cap = 10000; // we do 1000 rows per query
     let mut index = 0;
+
+    // TIMING
+    let query_build_time = Instant::now();
 
     for trade in trades {
         if counter < cap {
@@ -764,21 +863,11 @@ VALUES ");
     queries[index].pop();
     queries[index].push(';');
 
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
-    /*
-    let query_string = "\
-INSERT INTO ExecutedTrades
-(symbol, action, price, filled_OID, filled_UID, filler_OID, filler_UID, exchanged, execution_time)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
+    // TIMING
+    let query_build_time = query_build_time.elapsed().as_millis();
 
-    let statement = match transaction.prepare(&query_string) {
-        Ok(stmt) => stmt,
-        Err(e) => {
-            eprintln!("{}", e);
-            panic!("Failed to insert new orders to database!");
-        }
-    };
-    */
+    let query_exec_time = Instant::now();
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
     for query in &queries {
         if let Err(e) = transaction.execute(query.as_str(), &[]) {
@@ -788,20 +877,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);";
 
         }
     }
-    /*
-    for trade in trades {
-        transaction.execute(&statement, &[  &trade.symbol,
-                                            &trade.action,
-                                            &trade.price,
-                                            &trade.filled_oid,
-                                            &trade.filled_uid,
-                                            &trade.filler_oid,
-                                            &trade.filler_uid,
-                                            &trade.exchanged,
-                                            &trade.execution_time,
-                                         ]).expect("FAILED TO EXEC INSERT TRADES");
-    }
-    */
     transaction.commit().expect("Failed to commit buffered trade insert transaction.");
+
+    let query_exec_time = query_exec_time.elapsed().as_millis();
+    let end = start.elapsed().as_millis();
+    println!("Insert Executed Trade Speed (n = 10000)\
+\tQuery Build Time Elapsed: {}
+\tQuery Exec Time Elapsed: {}
+\tTotal Time Elapsed: {}
+\tTotal Items Inserted: {}
+", query_build_time, query_exec_time, end, trades.len());
+
 }
 
