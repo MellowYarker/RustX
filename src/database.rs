@@ -532,9 +532,8 @@ pub fn read_exchange_markets_simulations(symbol_vec: &mut Vec<String>, conn: &mu
 /******************************************************************************************************
  *                                         Buffered Writes API                                        *
  ******************************************************************************************************/
-// TODO: For all, try to construct a large query string and execute just once.
-//       I have a sneaking suspicion that calling execute() n times where n is large
-//       is less performant, even within a transaction, than a single execute() with multiple rows.
+/* TODO: Multi-row updates if possible.
+ **/
 pub fn insert_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
     let start = Instant::now();
@@ -586,8 +585,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
 }
 
 
-/* Unlike the other write functions, this one cannot use prepared statements,
- * since we are unsure which fields are actually being modified.
+/* TODO: Multi-row updates if possible.
  **/
 pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
 
@@ -634,6 +632,8 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
 }
 
 
+/* Performs 1 or more multi-row inserts to the pending orders table in
+ * a single transaction. */
 pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     // TIMING
     let start = Instant::now();
@@ -696,9 +696,10 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 }
 
 
+/* Performs 1 or more multi-row delete queries to the pending orders table
+ * in a single transaction. */
 pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     let start = Instant::now();
-//////////////////////////////////
 
     let query_build_time = Instant::now();
     let mut queries: Vec<String> = Vec::new();
@@ -734,7 +735,6 @@ pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     queries[index].pop();
     queries[index].push_str(");");
     let query_build_time = query_build_time.elapsed().as_millis();
-/////////////////////////////////
 
     let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
@@ -761,6 +761,7 @@ pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 }
 
 
+/* A single query to set or update the exchange stats. */
 pub fn update_total_orders(total_orders: i32, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     // Update the exchange total orders
@@ -779,6 +780,10 @@ UPDATE SET total_orders=$1;";
 }
 
 
+/* Performs an update per modified market in a single transaction.
+ * This table always stays small, so the cost of 1 connection per
+ * query is negligible, especially when using a prepared statement.
+ **/
 pub fn update_buffered_markets(markets: &Vec<&SecStat>, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     let query_string = "\
@@ -808,6 +813,7 @@ WHERE Markets.symbol = $6;";
 }
 
 
+/* Performs 1 or more multi-row inserts in a single transaction. */
 pub fn insert_buffered_trades(trades: &Vec<Trade>, conn: &mut Client) {
     // TIMING
     let start = Instant::now();
