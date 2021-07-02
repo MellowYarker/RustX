@@ -608,24 +608,45 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
 }
 
 pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
-    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    let mut queries: Vec<String> = Vec::new();
+    let query_string = String::from("INSERT INTO PendingOrders (order_id) VALUES ");
+    queries.push(query_string.clone());
 
-    let query_string = "\
-INSERT INTO PendingOrders
-VALUES ($1);";
-
-    let statement = match transaction.prepare(&query_string) {
-        Ok(stmt) => stmt,
-        Err(e) => {
-            eprintln!("{}", e);
-            panic!("Failed to insert new orders to database!");
-        }
-    };
+    let mut counter = 0;
+    let cap = 1000; // we do 1000 rows per query
+    let mut index = 0;
 
     for order in pending {
-        transaction.execute(&statement, &[&order]).expect("FAILED TO EXEC INSERT PENDING");
+        if counter < cap {
+            queries[index].push_str(&format!["({}),\n", order].as_str());
+        } else {
+            // 1. Terminate the current query
+            queries[index].pop();
+            queries[index].pop();
+            queries[index].push(';');
+            // 2 Update counters
+            index += 1;
+            counter = 0;
+            // 3. Start new query
+            queries.push(query_string.clone());
+            queries[index].push_str(&format!["({}),\n", order].as_str());
+        }
+        counter += 1;
     }
 
+    queries[index].pop();
+    queries[index].pop();
+    queries[index].push(';');
+
+    let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
+    // Execute all the queries.
+    for query in &queries {
+        if let Err(e) = transaction.execute(query.as_str(), &[]) {
+            eprintln!("{}", e);
+            eprintln!("{}", query);
+            panic!("Failed to exec insert PendingOrders.");
+        }
+    }
     transaction.commit().expect("Failed to commit buffered pending order insert transaction.");
 }
 
