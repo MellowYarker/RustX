@@ -575,10 +575,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);";
     transaction.commit().expect("Failed to commit buffered order insert transaction.");
     let query_exec_time = query_exec_time.elapsed().as_millis();
     let end = start.elapsed().as_millis();
-    println!("Insert New Order Speed\
+    println!("
+Insert New Order Speed
 \tQuery Build Time Elapsed: DNE
-\tQuery Exec Time Elapsed: {}
-\tTotal Time Elapsed: {}
+\tQuery Exec Time Elapsed: {} ms
+\tTotal Time Elapsed: {} ms
 \tTotal Items Inserted: {}
 ", query_exec_time, end, orders.len());
 
@@ -591,42 +592,106 @@ pub fn update_buffered_orders(orders: &Vec<DatabaseReadyOrder>, conn: &mut Clien
 
     let start = Instant::now();
 
+    // 3 types of updates
+    // 1. filled & time updated
+    // 2. status & time updated
+    // 3. filled & status & time updated
+    let filled_string = "UPDATE Orders SET filled=$1, time_updated=$2 WHERE order_id=$3;";
+    let status_string = "UPDATE Orders SET status=$1, time_updated=$2 WHERE order_id=$3;";
+    let total_string = "UPDATE Orders SET filled=$1, status=$2, time_updated=$3 WHERE order_id=$4;";
+
+
     // TIMING
     let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
+    let filled_stmt = match transaction.prepare(&filled_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to create 'filled' prepared statement for updated orders!");
+        }
+    };
+    let status_stmt = match transaction.prepare(&status_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to create 'status' prepared statement for updated orders!");
+        }
+    };
+    let total_stmt = match transaction.prepare(&total_string) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("Failed to create 'total' prepared statement for updated orders!");
+        }
+    };
+
+    enum UpdateType {
+        FILL,
+        STATUS,
+        TOTAL,
+        NONE
+    }
+
     for order in orders {
-        let mut arguments = String::new();
+        let mut order_type = UpdateType::NONE;
+
+        let mut filled: Option<i32> = None;
+        let mut status: Option<String> = None;
 
         if let Some(amount_filled) = order.filled {
-            arguments.push_str(format!["filled={}, ", amount_filled].as_str());
+            filled = Some(amount_filled);
+            order_type = UpdateType::FILL;
         }
 
         if let Some(new_status) = order.status {
-            arguments.push_str(format!["status='{:?}', ", new_status].as_str());
+            status = Some(format!["{:?}", new_status]);
+            if let UpdateType::FILL = order_type {
+                order_type = UpdateType::TOTAL;
+            } else {
+                order_type = UpdateType::STATUS;
+            }
         }
 
         if let Some(update_time) = order.time_updated {
-            arguments.push_str(format!["time_updated='{}', ", update_time].as_str());
-        }
+            let time_updated = update_time;
 
-        arguments.pop();
-        arguments.pop();
-        arguments.push(' ');
-
-        let query_string = format!["UPDATE Orders SET {} WHERE order_id=$1;", arguments];
-        if let Err(e) = transaction.execute(query_string.as_str(), &[&order.order_id.unwrap()]) {
-            eprintln!("{}", e);
-            panic!("Something went wrong with the buffered order update statement.");
+            match order_type {
+                UpdateType::FILL => {
+                    let filled = filled.unwrap();
+                    if let Err(e) = transaction.execute(&filled_stmt, &[&filled, &time_updated, &order.order_id.unwrap()]) {
+                        eprintln!("{}", e);
+                        panic!("Something went wrong with the buffered order update statement.");
+                    }
+                },
+                UpdateType::STATUS => {
+                    let status = status.unwrap();
+                    if let Err(e) = transaction.execute(&status_stmt, &[&status, &time_updated, &order.order_id.unwrap()]) {
+                        eprintln!("{}", e);
+                        panic!("Something went wrong with the buffered order update statement.");
+                    }
+                },
+                UpdateType::TOTAL => {
+                    let filled = filled.unwrap();
+                    let status = status.unwrap();
+                    if let Err(e) = transaction.execute(&total_stmt, &[&filled, &status, &time_updated, &order.order_id.unwrap()]) {
+                        eprintln!("{}", e);
+                        panic!("Something went wrong with the buffered order update statement.");
+                    }
+                },
+                UpdateType::NONE => panic!("Our updated order has no data??")
+            }
         };
     }
     transaction.commit().expect("Failed to commit buffered order update transaction.");
     let query_exec_time = query_exec_time.elapsed().as_millis();
     let end = start.elapsed().as_millis();
-    println!("Update Known Order Speed\
+    println!("\
+Update Known Order Speed
 \tQuery Build Time Elapsed: DNE
-\tQuery Exec Time Elapsed: {}
-\tTotal Time Elapsed: {}
+\tQuery Exec Time Elapsed: {} ms
+\tTotal Time Elapsed: {} ms
 \tTotal Items Updated: {}
 ", query_exec_time, end, orders.len());
 }
@@ -643,7 +708,7 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     queries.push(query_string.clone());
 
     let mut counter = 0;
-    let cap = 10000; // we do 1000 rows per query
+    let cap = 100000; // Number of rows per statement
     let mut index = 0;
 
     // TIMING
@@ -687,10 +752,11 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     let query_exec_time = query_exec_time.elapsed().as_millis();
     let end = start.elapsed().as_millis();
 
-    println!("Insert Pending Speed (n = 10000)\
-\tQuery Build Time Elapsed: {}
-\tQuery Exec Time Elapsed: {}
-\tTotal Time Elapsed: {}
+    println!("\
+Insert Pending Speed (n = 100000)
+\tQuery Build Time Elapsed: {} ms
+\tQuery Exec Time Elapsed: {} ms
+\tTotal Time Elapsed: {} ms
 \tTotal Items Inserted: {}
 ", query_build_time, query_exec_time, end, pending.len());
 }
@@ -701,17 +767,15 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     let start = Instant::now();
 
+    // TIMING
     let query_build_time = Instant::now();
     let mut queries: Vec<String> = Vec::new();
     let query_string = String::from("DELETE FROM PendingOrders WHERE order_id IN ( ");
     queries.push(query_string.clone());
 
     let mut counter = 0;
-    let cap = 1000; // we do 1000 rows per query
+    let cap = 100000; // Number of rows per statement
     let mut index = 0;
-
-    // TIMING
-    let query_build_time = Instant::now();
 
     for order in pending {
         if counter < cap {
@@ -751,10 +815,11 @@ pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     let query_exec_time = query_exec_time.elapsed().as_millis();
     let end = start.elapsed().as_millis();
 
-    println!("Delete Pending Speed (n = 1000)\
-\tQuery Build Time Elapsed: {}
-\tQuery Exec Time Elapsed: {}
-\tTotal Time Elapsed: {}
+    println!("\
+Delete Pending Speed (n = 100000)
+\tQuery Build Time Elapsed: {} ms
+\tQuery Exec Time Elapsed: {} ms
+\tTotal Time Elapsed: {} ms
 \tTotal Items Deleted: {}
 ", query_build_time, query_exec_time, end, pending.len());
 
@@ -825,7 +890,7 @@ VALUES ");
     queries.push(query_string.clone());
 
     let mut counter = 0;
-    let cap = 10000; // we do 1000 rows per query
+    let cap = 100000; // Number of rows per statement
     let mut index = 0;
 
     // TIMING
@@ -887,10 +952,11 @@ VALUES ");
 
     let query_exec_time = query_exec_time.elapsed().as_millis();
     let end = start.elapsed().as_millis();
-    println!("Insert Executed Trade Speed (n = 10000)\
-\tQuery Build Time Elapsed: {}
-\tQuery Exec Time Elapsed: {}
-\tTotal Time Elapsed: {}
+    println!("\
+Insert Executed Trade Speed (n = 100000)
+\tQuery Build Time Elapsed: {} ms
+\tQuery Exec Time Elapsed: {} ms
+\tTotal Time Elapsed: {} ms
 \tTotal Items Inserted: {}
 ", query_build_time, query_exec_time, end, trades.len());
 
