@@ -740,12 +740,15 @@ pub fn insert_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
 
     let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
-    // Execute all the queries.
-    for query in &queries {
-        if let Err(e) = transaction.execute(query.as_str(), &[]) {
-            eprintln!("{}", e);
-            eprintln!("{}", query);
-            panic!("Failed to exec insert PendingOrders.");
+    // If we have a statement to execute...
+    if (counter != 0) || (queries.len() > 1) {
+        // Execute all the queries.
+        for query in &queries {
+            if let Err(e) = transaction.execute(query.as_str(), &[]) {
+                eprintln!("{}", e);
+                eprintln!("{}", query);
+                panic!("Failed to exec insert PendingOrders.");
+            }
         }
     }
     transaction.commit().expect("Failed to commit buffered pending order insert transaction.");
@@ -803,11 +806,14 @@ pub fn delete_buffered_pending(pending: &Vec<i32>, conn: &mut Client) {
     let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
-    for query in &queries {
-        if let Err(e) = transaction.execute(query.as_str(), &[]) {
-            eprintln!("{}", e);
-            eprintln!("{}", query);
-            panic!("Failed to exec delete pending query.");
+    // If we have a statement to execute...
+    if (counter != 0) || (queries.len() > 1) {
+        for query in &queries {
+            if let Err(e) = transaction.execute(query.as_str(), &[]) {
+                eprintln!("{}", e);
+                eprintln!("{}", query);
+                panic!("Failed to exec delete pending query.");
+            }
         }
     }
     transaction.commit().expect("Failed to commit buffered pending order delete transaction.");
@@ -940,12 +946,15 @@ VALUES ");
     let query_exec_time = Instant::now();
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
 
-    for query in &queries {
-        if let Err(e) = transaction.execute(query.as_str(), &[]) {
-            eprintln!("{}", e);
-            eprintln!("{}", query);
-            panic!("Failed to exec insert ExecutedTrades.");
+    // If we have a statement to execute...
+    if (counter != 0) || (queries.len() > 1) {
+        for query in &queries {
+            if let Err(e) = transaction.execute(query.as_str(), &[]) {
+                eprintln!("{}", e);
+                eprintln!("{}", query);
+                panic!("Failed to exec insert ExecutedTrades.");
 
+            }
         }
     }
     transaction.commit().expect("Failed to commit buffered trade insert transaction.");
