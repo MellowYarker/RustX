@@ -118,8 +118,7 @@ pub fn populate_exchange_markets(exchange: &mut Exchange, conn: &mut Client) {
     // spacial locality.
     for row in conn.query("\
 SELECT o.* FROM PendingOrders p, Orders o
-WHERE o.order_ID=p.order_ID
-ORDER BY (o.symbol, o.action)", &[]).expect("Something went wrong in the query.") {
+WHERE o.order_ID=p.order_ID;", &[]).expect("Something went wrong in the query.") {
 
         let order_id: i32 = row.get(0);
         let symbol: &str = row.get(1);
