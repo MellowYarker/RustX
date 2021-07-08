@@ -18,6 +18,8 @@ use std::io::{self, prelude::*};
 
 use postgres::{Client, NoTls};
 
+use std::time::Instant;
+
 fn main() {
     let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
     let mut users    = Users::new();     // All our users are stored here.
@@ -28,19 +30,37 @@ fn main() {
 
     println!("Connected to database.");
 
+    let start = Instant::now();
+    let user_count = Instant::now();
     // Reads total # users
     users.direct_update_total(&mut client);
+    let user_count = user_count.elapsed().as_millis();
 
     /* TODO: Top N buys and sells in each market, rather than all.
      *       This decreases the amount of RAM, increases the computation speed.
      **/
     println!("Getting markets.");
+    let market_time = Instant::now();
     database::populate_exchange_markets(&mut exchange, &mut client);    // Fill the pending orders of the markets
+    let market_time = market_time.elapsed().as_millis();
+    let stats_time = Instant::now();
     database::populate_market_statistics(&mut exchange, &mut client);   // Fill the statistics for each market
+    let stats_time = stats_time.elapsed().as_millis();
+    let x_stats_time = Instant::now();
     database::populate_exchange_statistics(&mut exchange, &mut client); // Fill the statistics for the exchange
+    let x_stats_time = x_stats_time.elapsed().as_millis();
+    let has_trades_time = Instant::now();
     database::populate_has_trades(&mut exchange, &mut client);          // Fill the has_trades map for the exchange
+    let has_trades_time = has_trades_time.elapsed().as_millis();
 
+    let end = start.elapsed().as_millis();
     println!("Populated users, markets, and statistics.");
+    println!("\tTime elapsed to get user count: {} ms", user_count);
+    println!("\tTime elapsed to populate markets: {} ms", market_time);
+    println!("\tTime elapsed to populate market stats: {} ms", stats_time);
+    println!("\tTime elapsed to populate exchange stats: {} ms", x_stats_time);
+    println!("\tTime elapsed to populate has_trades: {} ms", has_trades_time);
+    println!("\nTotal Setup Time elapsed : {} ms", end);
 
     let argument = match parser::command_args(env::args()) {
         Ok(arg) => arg,

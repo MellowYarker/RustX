@@ -22,6 +22,10 @@ CREATE TABLE Orders (
         REFERENCES Account(ID)
 );
 
+-- This allows us to do HOT updates, critical for fast updates!
+-- HOT (Heap only Tuple) updates do not force re-indexing + can
+-- allow deletion of stale records outside of AUTOVACUUM Calls.
+ALTER TABLE Orders SET (fillfactor = 70);
 
 CREATE TABLE PendingOrders (
     order_ID        int,
