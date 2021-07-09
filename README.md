@@ -66,8 +66,27 @@ In this demo, 3 `buy` orders are placed and subsequently sorted by price, then 4
 
 ## Technical Details
 ### Changelog
-#### 6 - Persistence, or, the story of compromises (consistency vs. latency).
-I will summarize the last ~month of work here shortly.
+#### 6 - Persistence and compromises (consistency vs. latency).
+Over the last month I worked on the **[PER](https://github.com/MellowYarker/RustX/projects/2)** project - an effort to integrate postgresql into RustX.
+
+Exchanges are responsible for people's money, so maintaining consistent state is a crucial goal. Without a database, state cannot live beyond the program's termination, making it suspectible to power failures, hardware resource limits, program bugs that may induce `panic!`'s, or operating system errors. With consistencey as the primary goal in mind, I started writing all new orders, trades, users, etc to the database as soon as the exchange processed them. After verifying all the database writes were complete, I did a performance test, and found a big problem.
+
+Computers are much faster than humans. Jeff Atwood [said it pretty nicely](https://blog.codinghorror.com/the-infinite-space-between-words/): "*To computers, we humans work on a completely different time scale, practically geologic time*". However, even some computer operations can take tens, or even hundreds of times longer than other operations, like a clock cycle or an L1 cache reference. One such operation is reading data from disk, the IO bottleneck; a problem that is exacerbated further when you put a RDBMs like Postgres in-between you and your hard drive/SSD. Since disk IO is so costly, the OS will usually buffer writes to disk, unless you [force a flush](https://linux.die.net/man/3/fflush), something my first approach failed to do (*spectacularly*).
+
+Long story short, when you perform incredibly small and frequent writes to your database, a program that frequently **flushes** to disk to ensure durability of data, you make your computer *truly experience geological time*. My previous benchmarks of **millions of orders per second** plummeted to the realm of 10s to 100s of orders per second. This would not cut it, but how can you buffer writes while ensuring consistency is maintained? You make a compromise, and accept eventual consistency.
+
+*Eventual Consistency* - the guarantee that your data will be consistent... eventually. Buffering writes introduces a new class of problems, mostly oriented around managing RAM, avoiding cache invalidation, and ensuring your buffered data actually gets written to disk before something goes wrong. In my case, I chose to buffer three things:
+1. Newly placed orders that the DB has never seen
+2. Updates to orders that the DB knows about
+3. Trades
+
+New orders and trades are unknown to the database, so they must be written in their entirety. Known trades can only change in a few ways (filled count, update time, order status), so they require far less information retention in memory. If an account has been modified such that one of its orders or trades is in a buffer, we **cannot** evict it from the program's cache *until the buffers have been flushed*. If we were to evict such an account, then attempt to modify it in some other way, we would not be able to gather the correct information from the database, as the database lags behind the application (slightly).
+
+Periodically, when we need to evict a user but all of the cached users have been modified since the last write to the database, we will force a flush of the buffers. Additionally, we flush the buffers when they reach a hardcoded capacity (200k elements at time of writing, arbitrarily chosen by me) and on program shutdown. When the buffers are flushed, we modify all our cached users and markets to indicate that they are no longer modified, and so the users can be evicted from cache according to whatever cache policy is in use.
+
+This buffered write approach is a big win for user latency and overall performance, and in the best case (when all the necessary users are cached and they have a perfect view of their orders, + no buffer flush is triggered) program runtime approaches that of the 100% in-memory version from last month. Unfortunately, this implementation really just kicks the can down the road, since we still have to perform the *blocking* DB write, it just happens to occur all at once (i.e it takes a significant amount of time). While certain database tricks like multirow inserts/deletes, batch transactions, HOT updates, and dropping indicies may help, they don't get to the crux of the problem: the fact that the write is a **blocking** operation.
+
+The most ideal operation would be to have an asynch write to the DB. With the current architecture, we have to wait until the write is complete so that the buffers can be emptied and the caches can be modified. If I were to evict some user from the cache while the DB write occured, I would risk invalidating the cache, then invalidating the user account, and making the exchange reach an inconsistent, and perhaps irrecoverable state. The only way to avoid this is to scale the cache capacity up to a point where we never need to evict a user, or we store all the executed trades in memory. Both of these problems can be solved by using a scalable in-memory, remote cache like Memcached or Redis, and so the next big feature I'll be adding is integrating Redis!
 #### 5 - Adding Accounts (Most Recent)
 The branch **WHY** (as in, *why am I still working on this*), in which I implemented and integrated accounts everywhere, has significantly changed the structure of the program. In fact, the previous performance numbers are more or less irrelevant now, since our simulation has been rewritten.
 
