@@ -2,10 +2,10 @@ use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 
 pub mod requests;
-pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation};
+pub use crate::exchange::requests::{Order, InfoRequest, CancelOrder, Request, Simulation, OrderStatus};
 
 pub mod filled;
-pub use crate::exchange::filled::FilledOrder;
+pub use crate::exchange::filled::Trade;
 
 pub mod stats;
 pub use crate::exchange::stats::SecStat;
@@ -14,6 +14,12 @@ pub mod market;
 pub use crate::exchange::market::Market;
 
 pub use crate::account::{UserAccount, Users};
+
+pub use crate::database;
+
+pub use crate::buffer::BufferCollection;
+
+use postgres::Client;
 
 // Error types for price information.
 pub enum PriceError {
@@ -24,31 +30,24 @@ pub enum PriceError {
 // Represents our exchange's state.
 #[derive(Debug)]
 pub struct Exchange {
-    pub live_orders: HashMap<String, Market>,               // Orders on the market
-    pub filled_orders: HashMap<String, Vec<FilledOrder>>,   // Orders that have been filled
-    pub statistics: HashMap<String, SecStat>,               // The general statistics of each symbol
+    pub live_orders: HashMap<String, Market>,    // Orders on the market
+    pub has_trades: HashMap<String, bool>,
+    pub statistics: HashMap<String, SecStat>,    // The general statistics of each symbol
     pub total_orders: i32
 }
 
 impl Exchange {
     // Create a new exchange on startup
     pub fn new() -> Self {
-        let live: HashMap<String, Market> = HashMap::new();
-        let filled: HashMap<String, Vec<FilledOrder>> = HashMap::new();
-        let stats: HashMap<String, SecStat> = HashMap::new();
+        let live_orders: HashMap<String, Market> = HashMap::new();
+        let has_trades: HashMap<String, bool> = HashMap::new();
+        let statistics: HashMap<String, SecStat> = HashMap::new();
         Exchange {
-            live_orders: live,
-            filled_orders: filled,
-            statistics: stats,
+            live_orders,
+            has_trades,
+            statistics,
             total_orders: 0
         }
-    }
-
-    // Initializes the stats for a market given the first order.
-    fn init_stats(&mut self, order: &Order) {
-        let stat = SecStat::from(order);
-        self.statistics.insert(stat.symbol.clone(), stat);
-        self.total_orders += 1;
     }
 
     /* Update the stats for a market given the new order.
@@ -56,15 +55,17 @@ impl Exchange {
      *
      * Returns Some(price) if trade occured, or None.
      */
-    fn update_state(&mut self, order: &Order, users: &mut Users, executed_trades: Option<Vec<FilledOrder>>) -> Option<f64> {
-        let stats: &mut SecStat = self.statistics.get_mut(&order.security).unwrap();
+    fn update_state(&mut self, order: &Order, users: &mut Users, buffers: &mut BufferCollection, exchange_event: Option<(Vec<Order>, Vec<Trade>)>, conn: &mut Client) -> Option<f64> {
+
+        let stats: &mut SecStat = self.statistics.get_mut(&order.symbol).unwrap();
+        stats.modified = true;
 
         // Update the counters and the price
         match &order.action[..] {
-            "buy" => {
+            "BUY" => {
                 stats.total_buys += 1;
             },
-            "sell" => {
+            "SELL" => {
                 stats.total_sells += 1;
             },
             _ => ()
@@ -73,11 +74,12 @@ impl Exchange {
         let mut new_price = None;
 
         // Update the price and filled orders if a trade occurred.
-        if let Some(mut filled_orders) = executed_trades {
-            let price = filled_orders[filled_orders.len() - 1].price;
+        if let Some((mut modified_orders, mut trades)) = exchange_event {
+            let price = trades[trades.len() - 1].price;
             new_price = Some(price);
-            stats.update_price(price);
-            stats.update_filled_orders(&filled_orders);
+            // Updates in-mem data
+            stats.update_market_stats(price, &trades);
+
             /* TODO: Updating accounts seems like something that
              *       shouldn't slow down order execution.
              *
@@ -88,8 +90,9 @@ impl Exchange {
              * (think mutex locks, and maybe write filled orders to a buffer
              * in the mean time?)
              */
-            users.update_account_orders(&filled_orders);
-            self.extend_past_orders(&mut filled_orders);
+            // Updates database too.
+            users.update_account_orders(self, &mut modified_orders, &mut trades, buffers, conn);
+            self.has_trades.insert(order.symbol.clone(), true);
         };
 
         self.total_orders += 1;
@@ -119,18 +122,43 @@ impl Exchange {
         }
     }
 
-    // Extends the past orders vector
-    fn extend_past_orders(&mut self, new_orders: &mut Vec<FilledOrder>) {
+    /* Find all pending orders associated with the user, and store them in their account. */
+    pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
+        if user.pending_orders.is_complete {
+            panic!("Hey coder genius. You're calling fetch_account_pending_orders on an account that is up-to-date.");
+        }
 
-        // Default initialize the past orders market if it doesn't already exist
-        let default_type: Vec<FilledOrder> = Vec::new();
-        let market = self.filled_orders.entry(new_orders[0].security.clone()).or_insert(default_type);
-        market.append(new_orders);
+        // Check all the markets
+        for (_symbol, market) in self.live_orders.iter() {
+            // Check all the buy orders of this market
+            for buy in market.buy_orders.iter() {
+                if buy.user_id == user.id {
+                    user.pending_orders.insert_order(buy.clone());
+                }
+            }
+            // Check all the sell orders of this market.
+            for sell_container in market.sell_orders.iter() {
+                let sell = &sell_container.0;
+
+                if sell.user_id == user.id {
+                    user.pending_orders.insert_order(sell.clone());
+                }
+            }
+        }
+        // updates some account state data
+        user.pending_orders.update_after_fetch();
+
     }
 
     // Print a market
     pub fn show_market(&self, symbol: &String) {
-        let market = self.live_orders.get(symbol).expect("NO VALUE");
+        let market = match self.live_orders.get(symbol) {
+            Some(market) => market,
+            None => {
+                println!("${} has no pending orders!", symbol);
+                return;
+            }
+        };
         let num_orders_to_view = 10;
 
         println!("\nMarket: ${}", symbol);
@@ -170,55 +198,63 @@ impl Exchange {
 
     }
 
+    // TODO: Once we store time, lets include timeframes?
+    //       Might be good for graphing price.
     // Shows the history of orders in this market.
-    pub fn show_market_history(&self, symbol: &String) {
-        let market = self.filled_orders.get(symbol).expect("The symbol that was requested either doesn't exist or has no past trades.");
-
-        println!("\nMarket History: ${}", symbol);
-        println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
-        println!("\t\t------------------------------------------------------");
-        for past_order in market {
-            println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filled_by, past_order.id, past_order.exchanged, past_order.price);
+    pub fn show_market_history(&self, symbol: &String, conn: &mut Client) {
+        if let Some(trades) = database::read_trades(symbol, conn) {
+            println!("\nMarket History: ${}", symbol);
+            println!("\t\t| Filled by Order | Order | Shares Exchanged | Price |");
+            println!("\t\t------------------------------------------------------");
+            for past_order in trades {
+                println!("\t\t|\t{}\t\t{}\t     {}\t  \t${:.2}   |", past_order.filler_oid, past_order.filled_oid, past_order.exchanged, past_order.price);
+            }
+            println!("\t\t------------------------------------------------------\n");
+        } else {
+            eprintln!("The security that was requested either doesn't exist or has no past trades.");
         }
-        println!("\t\t------------------------------------------------------\n");
     }
 
-    /* Add an order to the security's order list.
-     * If the security isn't in the HashMap, create it.
+    /* Add an order to the market's order list,
+     * and may fill pending orders whose conditions are satisfied.
      * Assumes user has already been authenticated.
      *
-     * Returns Some(new_price) if trade occurred, else None.
+     * Returns the new price if trade occurred, otherwise, None or errors.
     */
-    pub fn submit_order_to_market(&mut self, users: &mut Users, order: Order, username: &String, auth: bool) -> Option<f64> {
+    pub fn submit_order_to_market(&mut self, users: &mut Users, buffers: &mut BufferCollection, order: Order, username: &String, auth: bool, conn: &mut Client) -> Result<Option<f64>, String> {
 
         // Mutable reference to the account associated with given username.
         let account = match users.get_mut(username, auth) {
             Ok(acc) => acc,
             Err(e) => {
                 Users::print_auth_error(e);
-                return None;
+                return Err("".to_string());
             }
         };
+
         let mut order: Order = order;
         let mut new_price = None; // new price if trade occurs
+
+        // PER-6 account is being modified so set modified to true.
+        account.modified = true;
 
         // Set the order_id for the order.
         order.order_id = self.total_orders + 1;
 
         // Try to access the security in the HashMap
-        match self.live_orders.get_mut(&order.security) {
+        match self.live_orders.get_mut(&order.symbol) {
             Some(market) => {
                 // Try to fill the new order with existing orders on the market.
-                let filled_orders = market.fill_existing_orders(&mut order);
+                let exchange_event = market.fill_existing_orders(&mut order);
 
                 // Add the new order to the buy/sell heap if it wasn't completely filled,
                 // as well as the users account.
                 if order.quantity != order.filled {
                     match &order.action[..] {
-                        "buy" => {
+                        "BUY" => {
                             market.buy_orders.push(order.clone());
                         },
-                        "sell" => {
+                        "SELL" => {
                             // Sell is a min heap so we reverse the comparison
                             market.sell_orders.push(Reverse(order.clone()));
                         },
@@ -226,44 +262,54 @@ impl Exchange {
                     }
 
                     // Add to this accounts pending orders.
-                    let current_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
-                    current_market.insert(order.order_id, order.clone());
+                    account.pending_orders.insert_order(order.clone());
                 }
+
+                // Add this new order to the database buffer
+                buffers.buffered_orders.add_unknown_to_order_buffer(&order);
+
                 // Update the state of the exchange.
-                new_price = self.update_state(&order, users, filled_orders);
+                new_price = self.update_state(&order, users, buffers, exchange_event, conn);
             },
+            // The market doesn't exist, create it if found in DB,
+            // otherwise the user entered a market that DNE.
             None => {
-                // The market doesn't exist, create it.
-                // buy is a max heap, sell is a min heap.
-                let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
-                let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
+                if database::read_market_exists(&order.symbol, conn) {
+                    // buy is a max heap, sell is a min heap.
+                    let mut buy_heap: BinaryHeap<Order> = BinaryHeap::new();
+                    let mut sell_heap: BinaryHeap<Reverse<Order>> = BinaryHeap::new();
 
-                // Store order on market, and in users account.
-                match &order.action[..] {
-                    "buy" => {
-                        buy_heap.push(order.clone());
-                    },
-                    "sell" => {
-                        sell_heap.push(Reverse(order.clone()));
-                    },
-                    // We can never get here.
-                    _ => ()
-                };
+                    // Store order on market, and in users account.
+                    match &order.action[..] {
+                        "BUY" => {
+                            buy_heap.push(order.clone());
+                        },
+                        "SELL" => {
+                            sell_heap.push(Reverse(order.clone()));
+                        },
+                        // We can never get here.
+                        _ => ()
+                    };
 
-                // Create the new market
-                let new_market = Market::new(buy_heap, sell_heap);
-                self.live_orders.insert(order.security.clone(), new_market);
+                    // Create the new market
+                    let new_market = Market::new(buy_heap, sell_heap);
+                    self.live_orders.insert(order.symbol.clone(), new_market);
 
-                // Add the symbol name and order to this accounts pending orders.
-                let new_account_market = account.pending_orders.entry(order.security.clone()).or_insert(HashMap::new());
-                new_account_market.insert(order.order_id, order.clone());
+                    // Add the symbol name and order to this accounts pending orders.
+                    account.pending_orders.insert_order(order.clone());
 
-                // Since this is the first order, initialize the stats for this security.
-                self.init_stats(&order);
+                    // Add this new order to the database buffer
+                    buffers.buffered_orders.add_unknown_to_order_buffer(&order);
+
+                    // Since this is the first order, initialize the stats for this security.
+                    new_price = self.update_state(&order, users, buffers, None, conn);
+                } else {
+                    return Err(format!["The market ${} was not found in the database. User error!", order.symbol]);
+                }
             }
         }
 
-        return new_price;
+        return Ok(new_price);
     }
 
     /* Cancel the order in the given market with the given order ID.
@@ -275,14 +321,22 @@ impl Exchange {
      *       whatever *remains* of an order, i.e any fulfilled portion
      *       cannot be cancelled.
      * */
-    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users) -> Result<(), String>{
-        if let Ok(account) = users.get(&(order_to_cancel.username), true) {
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) -> Result<(), String>{
+        if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
+
+            // If we don't have the full picture of this users pending orders,
+            // get it. This is so we can ensure they don't fill their own order,
+            // and accurately represent their account state.
+            if !account.pending_orders.is_complete {
+                self.fetch_account_pending_orders(account);
+            }
+
             // 1. Ensure the order belongs to the user
-            if let Some(action) = account.user_placed_order(&order_to_cancel.symbol, order_to_cancel.order_id) {
+            if let Some(action) = account.user_placed_pending_order(&order_to_cancel.symbol, order_to_cancel.order_id, conn) {
                 if let Some(market) = self.live_orders.get_mut(&(order_to_cancel.symbol)) {
                     // 2. Remove order from the market
-                    match action.as_str() {
-                        "buy" => {
+                    match &action[..] {
+                        "BUY" => {
                             // Move all the orders except the one we're cancelling to a new heap,
                             // then move it back to the buy heap.
                             let new_size = market.buy_orders.len() - 1;
@@ -292,7 +346,7 @@ impl Exchange {
                             }
                             market.buy_orders.append(&mut temp);
                         },
-                        "sell" => {
+                        "SELL" => {
                             // Move all the orders except the one we're cancelling to a new heap,
                             // then move it back to the sell heap.
                             let new_size = market.sell_orders.len() - 1;
@@ -308,7 +362,19 @@ impl Exchange {
                     // 3. Remove order from users account
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+
+                        // Indicate that the user's account has been modified.
+                        account.modified = true;
                     }
+
+                    // TODO: Do we want to update market stats? total_cancelled maybe?
+                    //       If we do, we have to also set stats.modified = true
+                    let mut to_remove = Vec::new();
+                    to_remove.push(order_to_cancel.order_id);
+
+                    // Add this cancellation to the database buffer.
+                    let order = Order::from_cancelled(order_to_cancel.order_id);
+                    buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, false); // PER-5 update
 
                     return Ok(());
 
@@ -331,10 +397,12 @@ impl Exchange {
      *      - Maybe simulate individual markets? (This was old behaviour)
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
-    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users) {
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
 
-        let buy = String::from("buy");
-        let sell = String::from("sell");
+        // let mut test_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls).expect("Failed to access test db");
+
+        let buy = String::from("BUY");
+        let sell = String::from("SELL");
 
         let mut usernames: Vec<String> = Vec::with_capacity(sim.trader_count as usize);
         let mut i = 0;
@@ -349,9 +417,14 @@ impl Exchange {
         i = 0;
         let mut markets: Vec<String> = Vec::with_capacity(sim.market_count as usize);
         let mut prices: Vec<f64> = Vec::with_capacity(sim.market_count as usize);
+
+        // Fill markets
+        database::read_exchange_markets_simulations(&mut markets, conn);
+        if markets.len() != (sim.market_count as usize) {
+            panic!("{} markets is not {} markets!", markets.len(), sim.market_count);
+        }
+
         while i != sim.market_count {
-            let market_name = format!("market_{}", i);
-            markets.push(market_name.to_uppercase());
             prices.push(10.0); // The price doesn't matter for bandwidth testing
             i += 1;
         }
@@ -360,7 +433,7 @@ impl Exchange {
         let mut username: &String;
 
         for name in usernames.iter() {
-            users.new_account(UserAccount::from(name, &"password".to_string()));
+            users.new_account(UserAccount::from(name, &"password".to_string()), conn);
         }
 
         // Simulation loop
@@ -393,17 +466,31 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            // Create the order and send it to the market
-            let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, username);
+            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
+                // Create the order and send it to the market
+                let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
 
-            if let Ok(account) =  users.authenticate(username, &"password".to_string()) {
-                if account.validate_order(&order) {
-                    self.submit_order_to_market(users, order, username, true);
+                // If we have an incomplete view of this account, get full view.
+                if !account.pending_orders.is_complete {
+                    self.fetch_account_pending_orders(&mut account);
+                }
+
+                let (validated, _) = account.validate_order(&order);
+                if validated {
+                    if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
+                        eprintln!("{}", e);
+                    }
+                }
+            }
+
+            // buffers.update_buffer_states(&self, &mut test_client);
+            if buffers.update_buffer_states(&self, conn) {
+                users.reset_users_modified();
+                // Set all market stats modified to false
+                for (_key, entry) in self.statistics.iter_mut() {
+                    entry.modified = false;
                 }
             }
         }
-
-        // If you want prints of each users account, uncomment this.
-        // users.print_all();
     }
 }

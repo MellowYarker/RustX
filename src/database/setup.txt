@@ -1,0 +1,21 @@
+# To create the DB
+1. sudo su - postgres -i
+2. initdb -D '/var/lib/postgres/data/'
+2. pg_ctl -D /usr/local/var/data -l logfile start
+3. exit
+
+# Next we spin up the server daemon
+1. sudo systemctl start postgres
+2. sudo systemctl status postgres
+
+# Create the database
+1. createdb database_name
+
+# Done! Just need to initialize the tables now.
+1. psql database_name -U postgres < init.sql
+
+# Next, we want to fill the tables with our program.
+1. run rustx
+2. upgradedb admin <password>
+3. > Enter file to update the DB
+4. Should only be used for updating markets!

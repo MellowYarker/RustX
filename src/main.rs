@@ -1,22 +1,72 @@
 #[macro_use] extern crate random_number;
+extern crate chrono;
+extern crate ctrlc;
 
 pub mod exchange;
 pub mod parser;
 pub mod account;
+pub mod buffer;
+pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
+pub use crate::buffer::BufferCollection;
 
 use std::env;
 use std::process;
 use std::io::{self, prelude::*};
 
-fn main() {
+use postgres::{Client, NoTls};
 
-    // Our central exchange, everything happens here.
-    let mut exchange: Exchange = Exchange::new();
-    // All our users are stored here.
-    let mut users: Users = Users::new();
+use std::time::Instant;
+
+fn main() {
+    let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
+    let mut users    = Users::new();     // All our users are stored here.
+    let mut buffers  = BufferCollection::new(200000, 200000); // In-memory buffers that will batch write to DB.
+
+    let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
+        .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+    println!("Connected to database.");
+
+    let start = Instant::now();
+    let user_count = Instant::now();
+    // Reads total # users
+    users.direct_update_total(&mut client);
+    let user_count = user_count.elapsed().as_millis();
+
+    /* TODO: Should we store the top N buys and sells in each market, rather than all?
+     *       This would decrease the amount of RAM, and increases the computation speed.
+     *       I think this needs to wait for a move to Redis, as we currently read users
+     *       pending orders into their accounts by pulling this data
+     *          - (see fetch_account_pending_orders).
+     **/
+    println!("Getting markets.");
+    let market_time = Instant::now();
+    database::populate_exchange_markets(&mut exchange, &mut client);    // Fill the pending orders of the markets
+    let market_time = market_time.elapsed().as_millis();
+
+    let stats_time = Instant::now();
+    database::populate_market_statistics(&mut exchange, &mut client);   // Fill the statistics for each market
+    let stats_time = stats_time.elapsed().as_millis();
+
+    let x_stats_time = Instant::now();
+    database::populate_exchange_statistics(&mut exchange, &mut client); // Fill the statistics for the exchange
+    let x_stats_time = x_stats_time.elapsed().as_millis();
+
+    let has_trades_time = Instant::now();
+    database::populate_has_trades(&mut exchange, &mut client);          // Fill the has_trades map for the exchange
+    let has_trades_time = has_trades_time.elapsed().as_millis();
+
+    let end = start.elapsed().as_millis();
+    println!("Populated users, markets, and statistics.");
+    println!("\tTime elapsed to get user count: {} ms", user_count);
+    println!("\tTime elapsed to populate markets: {} ms", market_time);
+    println!("\tTime elapsed to populate market stats: {} ms", stats_time);
+    println!("\tTime elapsed to populate exchange stats: {} ms", x_stats_time);
+    println!("\tTime elapsed to populate has_trades: {} ms", has_trades_time);
+    println!("\nTotal Setup Time elapsed : {} ms", end);
 
     let argument = match parser::command_args(env::args()) {
         Ok(arg) => arg,
@@ -25,6 +75,20 @@ fn main() {
             process::exit(1);
         }
     };
+
+    // Set sigINT/sigTERM handlers
+    // TODO: If we want the sigINT handler thread to be capable of flushing the buffers, we'll need
+    // to share the buffers with it. To do this, we will have to wrap the buffers inside a mutex
+    // and wrap the mutex in an Arc.
+    //
+    // This might not be too technically difficult, but I'm not sure I like the behaviour:
+    //  -  It implies that we can shut the exchange while an order is being processed, potentially
+    //     resulting in inconsistent state.
+    //  -  To solve this, we would have to have some other shared var that says the state is
+    //     consistent, and since we're shutting down no more orders can be placed.
+    ctrlc::set_handler(|| {
+        println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
+    }).expect("Error setting Ctrl-C handler");
 
     // Read from file mode
     if !argument.interactive {
@@ -40,14 +104,24 @@ fn main() {
                         }
                     };
 
-                    // Our input has been validated, and we can now
-                    // attempt to service the request.
                     println!("Servicing Request: {}", raw);
-                    parser::service_request(request, &mut exchange, &mut users);
+                    // Our input has been validated. We can now attempt to service the request.
+                    parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
                 },
                 Err(_) => return
             }
+
+            // Make sure our buffer states are accurate.
+            if buffers.update_buffer_states(&exchange, &mut client) {
+                users.reset_users_modified();
+                // Set all market stats modified to false
+                for (_key, entry) in exchange.statistics.iter_mut() {
+                    entry.modified = false;
+                }
+            }
         }
+
+        buffers.flush_on_shutdown(&exchange, &mut client);
     } else {
         // User interface version
         println!("
@@ -73,9 +147,24 @@ fn main() {
                 Err(_)  => continue
             };
 
-            // Our input has been validated, and we can now
-            // attempt to service the request.
-            parser::service_request(request, &mut exchange, &mut users);
+            // If we got an exit request, service it an exit.
+            if let Request::ExitReq = request {
+                parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+                return;
+            }
+
+            // Our input has been validated. We can now attempt to service the request.
+            parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+
+            // Make sure our buffer states are accurate.
+            if buffers.update_buffer_states(&exchange, &mut client) {
+                users.reset_users_modified();
+
+                // Set all market stats modified to false
+                for (_key, entry) in exchange.statistics.iter_mut() {
+                    entry.modified = false;
+                }
+            }
         }
     }
 }
@@ -105,6 +194,7 @@ pub fn print_instructions() {
     println!("\t\tEx: simulate 300 500 10000\t<---- Simulates 10000 random buy/sell orders in 500 markets, with 300 random users.\n");
 
     println!("\tAccount Requests: account create/show USERNAME PASSWORD");
-    println!("\t\tEx: account create bigMoney notHashed\n");
+    println!("\t\tEx: account create bigMoney notHashed\n\n");
+    println!("\tTo perform a graceful shutdown and update the database, type EXIT.\n");
     println!("\tYou can see these instructions at any point by typing help.");
 }

@@ -1,0 +1,485 @@
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::convert::TryInto;
+
+use chrono::{Local, DateTime};
+
+use postgres::Client;
+use crate::database;
+
+use crate::exchange::{Exchange, OrderStatus, Trade, Order};
+use crate::exchange::stats::SecStat;
+
+
+/* This struct represents an order that is ready to be written to the database.
+ * We make the following distinction between known, and unknown orders:
+ *
+ *  Known Orders: orders that are known to the database, they have already been written to disk before.
+ *      -   If a known order is to be updated, the only fields that might have Some(val) are
+ *          filled, status, and update_time.
+ *      -   If the programs state of a field is the same as the database, we represent it as None here.
+ *
+ *  Unknown Orders: orders that are not known to the database, they have been placed for the first time.
+ *      -   Unknown orders are to be *inserted*, and ALL of their fields will have values,
+ *          excluding potentially time_updated.
+ *
+ *  The following SQL statements will need to be supported:
+ *      1. Insert to Orders (Unknown Order)
+ *      2. Insert to Pending (Unknown order)
+ *      3. Remove from Pending (Unknown order cancelled/completed)
+ *      4. Update Orders (Known order updated)
+ *
+ *  This struct summarizes all changes made to an order since the last write.
+ *  It's effectively a DIFF.
+ **/
+#[derive(Debug, Clone)]
+pub struct DatabaseReadyOrder {
+    pub action:       Option<String>,
+    pub symbol:       Option<String>,
+    pub quantity:     Option<i32>,
+    pub filled:       Option<i32>,
+    pub price:        Option<f64>,
+    pub order_id:     Option<i32>,
+    pub status:       Option<OrderStatus>,
+    pub user_id:      Option<i32>,
+    pub time_placed:  Option<DateTime<Local>>,
+    pub time_updated: Option<DateTime<Local>>,
+}
+
+impl DatabaseReadyOrder {
+
+    fn new() -> Self {
+        DatabaseReadyOrder {
+            action:       None,
+            symbol:       None,
+            quantity:     None,
+            filled:       None,
+            price:        None,
+            order_id:     None,
+            status:       None,
+            user_id:      None,
+            time_placed:  None,
+            time_updated: None,
+        }
+    }
+
+    /* Creates an order ready to be inserted to the database.
+     * Note that we take the current time for time_placed.
+     **/
+    fn prepare_new_order(order: &Order) -> Self {
+        DatabaseReadyOrder {
+            action: Some(order.action.clone()),
+            symbol: Some(order.symbol.clone()),
+            quantity: Some(order.quantity),
+            filled: Some(order.filled),
+            price: Some(order.price),
+            order_id: Some(order.order_id),
+            status: Some(order.status),
+            user_id: order.user_id,
+            time_placed:  Some(Local::now()),
+            time_updated: None,
+        }
+    }
+
+    /* Update the DatabaseReadyOrder given the current order's state. */
+    fn update_ready_order(&mut self, order: &Order, update_filled: bool) {
+
+        if update_filled {
+            self.filled = Some(order.filled);
+        }
+
+        match order.status {
+            // We only store pending orders (excluding buffers),
+            // so DB would know about pending (i.e ignore it).
+            OrderStatus::PENDING => (),
+            OrderStatus::COMPLETE | OrderStatus::CANCELLED => self.status = Some(order.status)
+        }
+
+        self.time_updated = Some(Local::now());
+    }
+}
+
+/* TODO: Do we want to do Trades here too?
+ * This struct helps us categorize which tables
+ * are to be modified given the current Orders buffer.*/
+#[derive(Debug)]
+pub struct TableModCategories {
+    insert_orders: Vec<DatabaseReadyOrder>,
+    update_orders: Vec<DatabaseReadyOrder>,
+    insert_pending: Vec<i32>,
+    delete_pending: Vec<i32>,
+    update_markets: HashMap<String, ()> // Just store symbols of modified markets
+}
+
+impl TableModCategories {
+    pub fn new() -> Self {
+        let update_orders  = Vec::new();
+        let delete_pending = Vec::new();
+        let update_markets = HashMap::new();
+
+        TableModCategories {
+            insert_orders: update_orders.clone(),
+            update_orders,
+            insert_pending: delete_pending.clone(),
+            delete_pending,
+            update_markets
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum BufferState {
+    EMPTY,
+    NONEMPTY,
+    FULL,
+    FORCEFLUSH, // when an external module like user cache is full, it sets state to FORCEFLUSH
+}
+
+#[derive(Debug)]
+pub struct OrderBuffer {
+    data: HashMap<i32, DatabaseReadyOrder>,
+    state: BufferState
+}
+
+impl OrderBuffer {
+
+    /* TODO: Mess around with this.
+     * Capacity is the number of Orders we want to store in the buffer. */
+    pub fn new(capacity: u32) -> Self {
+        let data: HashMap<i32, DatabaseReadyOrder> = HashMap::with_capacity(capacity.try_into().unwrap());
+        let state = BufferState::EMPTY;
+        OrderBuffer {
+            data,
+            state
+        }
+    }
+
+    /* This function clears the OrderBuffer.
+     * I think it would be more "Rust-like" to actually call drain()
+     * on the data, returning an iterator for use, but this works so...
+     **/
+    pub fn drain_buffer(&mut self) {
+        match self.state {
+            BufferState::EMPTY => println!("The Order buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => println!("The Order buffer was not full, we could have waited before draining."),
+            BufferState::FORCEFLUSH => println!("The Order buffer was forced to flush."),
+            BufferState::FULL => ()
+        }
+        self.state = BufferState::EMPTY;
+        self.data.clear();
+    }
+
+    /* We want to empty the buffer before it's close to
+     * being completely full. This prevents us from
+     * dealing with a situation where the buffer gets
+     * full in the middle of processing an order.
+     **/
+    pub fn update_space_remaining(&mut self) {
+        // If we've used 90% or more of the buffer, update the state.
+        let used: f64 = self.data.len() as f64;
+        let max : f64 = self.data.capacity() as f64;
+        if 0.9 < (used / max) {
+            self.state = BufferState::FULL;
+        }
+    }
+
+    /* Note that "unknown" doesn't mean unknown to the buffer.
+     * Rather, it means the order is unknown to the database.
+     *
+     * This function is meant for newly placed orders.
+     **/
+    pub fn add_unknown_to_order_buffer(&mut self, order: &Order) {
+        match self.state {
+            BufferState::FULL => panic!("Attempted to write an unknown order to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
+
+        match self.data.insert(order.order_id, DatabaseReadyOrder::prepare_new_order(order)) {
+            Some(_) => {
+                panic!("\
+    Order added to OrderBuffer was already stored in OrderBuffer!\
+    Find where add_unknown_to_order_buffer is called, and make sure to only add newly submitted orders!")
+            },
+            None => ()
+        }
+    }
+
+    /* If we're calling this function, the order has clearly been updated, and since we store
+     * status in the order now, we can clearly check if an order's status is changed from
+     * pending.
+     **/
+    pub fn add_or_update_entry_in_order_buffer(&mut self, order: &Order, update_filled: bool) {
+        let entry = match self.data.entry(order.order_id) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                if let BufferState::FULL = self.state {
+                    panic!("\
+Attempted to add an order to a full Order buffer!
+Be sure to clear the buffer well before it reaches capacity!");
+                }
+                entry.insert(DatabaseReadyOrder::new())
+            }
+        };
+
+        entry.update_ready_order(order, update_filled);
+
+        if let BufferState::EMPTY = self.state {
+            self.state = BufferState::NONEMPTY;
+        };
+    }
+
+    fn prepare_for_db_update(&mut self, categorize: &mut TableModCategories) {
+        // TODO: If we want to decrease redundant computation, and increase redundant data
+        // replication, we can store Some(symbol) in ALL DatabaseReadyOrder's, then use the
+        // update_market field of TableModCategories.
+        for (id, order) in self.data.iter_mut() {
+            match order.order_id {
+                // Unknown order
+                // care about insert pending, insert order
+                Some(_) => {
+                    categorize.insert_orders.push(order.clone());
+
+                    if let OrderStatus::PENDING = order.status.unwrap() {
+                        categorize.insert_pending.push(order.order_id.unwrap().clone());
+                    }
+                },
+                // Known order
+                // care about delete pending, update order
+                None => {
+                    // First, add the order ID.
+                    order.order_id = Some(id.clone());
+                    categorize.update_orders.push(order.clone());
+
+                    // If cancelled/complete
+                    if let Some(_) = order.status {
+                        categorize.delete_pending.push(order.order_id.unwrap().clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TradeBuffer {
+    data: Vec<Trade>, // A simple vector that stores the trades in the order they occur.
+    state: BufferState
+}
+
+impl TradeBuffer {
+
+    pub fn new(capacity: u32) -> Self {
+        let data: Vec<Trade> = Vec::with_capacity(capacity.try_into().unwrap());
+        let state = BufferState::EMPTY;
+        TradeBuffer {
+            data,
+            state
+        }
+    }
+
+    /* We want to empty the buffer before it's close to
+     * being completely full. This prevents us from
+     * dealing with a situation where the buffer gets
+     * full in the middle of processing an order.
+     **/
+    pub fn update_space_remaining(&mut self) {
+        // If we've used 90% or more of the buffer, update the state.
+        let used: f64 = self.data.len() as f64;
+        let max : f64 = self.data.capacity() as f64;
+        if 0.9 < (used / max) {
+            self.state = BufferState::FULL;
+        }
+    }
+
+    /* This function clears the TradeBuffer.
+     * I think it would be more "Rust-like" to actually call drain()
+     * on the data, returning an iterator for use, but this works so...
+     **/
+    pub fn drain_buffer(&mut self) {
+        match self.state {
+            BufferState::EMPTY => println!("The Trade buffer is empty, there is nothing to drain."),
+            BufferState::NONEMPTY => println!("The Trade buffer was not full, we could have waited before draining."),
+            BufferState::FORCEFLUSH => println!("The Trade buffer was forced to flush."),
+            BufferState::FULL => ()
+        }
+        self.state = BufferState::EMPTY;
+        self.data.clear();
+    }
+
+    pub fn add_trade_to_buffer(&mut self, trade: Trade) {
+        match self.state {
+            BufferState::FULL => panic!("Attempting to write a trade to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
+        self.data.push(trade);
+    }
+
+    /* This will consume the trades vector. */
+    pub fn add_trades_to_buffer(&mut self, trades: &mut Vec<Trade>) {
+        match self.state {
+            BufferState::FULL => panic!("Attempting to write several trades to a full buffer!"),
+            BufferState::EMPTY => self.state = BufferState::NONEMPTY,
+            _ => ()
+        }
+        self.data.append(trades);
+    }
+}
+
+#[derive(Debug)]
+pub struct BufferCollection {
+    pub buffered_orders: OrderBuffer, // where we temporarily store order updates that will be inserted/updated to the DB.
+    pub buffered_trades: TradeBuffer  // where we temporarily store trades that will be inserted in the DB
+}
+
+impl BufferCollection {
+    pub fn new(order_buffer_cap: u32, trade_buffer_cap: u32) -> Self {
+        let buffered_orders: OrderBuffer = OrderBuffer::new(order_buffer_cap);
+        let buffered_trades: TradeBuffer = TradeBuffer::new(trade_buffer_cap);
+
+        BufferCollection {
+            buffered_orders,
+            buffered_trades
+        }
+    }
+
+    pub fn force_flush(&mut self, exchange: &Exchange, conn: &mut Client) {
+        self.buffered_orders.state = BufferState::FORCEFLUSH;
+        self.buffered_trades.state = BufferState::FORCEFLUSH;
+        self.update_buffer_states(exchange, conn);
+    }
+
+    pub fn flush_on_shutdown(&mut self, exchange: &Exchange, conn: &mut Client) {
+        self.buffered_orders.update_space_remaining();
+        self.buffered_trades.update_space_remaining();
+
+        // Flush Orders if we have any
+        match self.buffered_orders.state {
+            BufferState::FULL | BufferState::NONEMPTY | BufferState::FORCEFLUSH => {
+                self.buffered_orders.state = BufferState::FORCEFLUSH; // Unnecessary, but more accurately describes state.
+                println!("Consuming order buffer...");
+
+                let mut categories = TableModCategories::new();
+                self.buffered_orders.prepare_for_db_update(&mut categories);
+
+                println!("Updating database...\n");
+                BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+
+                self.buffered_orders.drain_buffer();
+            },
+            _ => println!("Orders buffer is empty, skipping.")
+        }
+
+        // Flush Trades
+        match self.buffered_trades.state {
+            BufferState::FULL | BufferState::NONEMPTY | BufferState::FORCEFLUSH => {
+                self.buffered_trades.state = BufferState::FORCEFLUSH;
+
+                println!("Consuming trade buffer and updating database...\n");
+                database::insert_buffered_trades(&self.buffered_trades.data, conn);
+
+                self.buffered_trades.drain_buffer();
+            },
+            _ => println!("Trades buffer is empty, skipping.")
+        }
+    }
+
+    /* Check our buffer states.
+     * Returns true if Orders buffer was drained, false otherwise.
+     *      - If order buffer drained, we can reset user modified fields.
+     **/
+    pub fn update_buffer_states(&mut self, exchange: &Exchange, conn: &mut Client) -> bool {
+        self.buffered_orders.update_space_remaining();
+        self.buffered_trades.update_space_remaining();
+
+        let mut orders_drained = false;
+
+        match self.buffered_orders.state {
+            BufferState::FULL | BufferState::FORCEFLUSH => {
+                println!("WARNING: order buffer must be flushed. Write to the database!");
+
+                // Prepare for Order buffer drain
+                let mut categories = TableModCategories::new();
+                self.buffered_orders.prepare_for_db_update(&mut categories);
+                BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+
+                self.buffered_orders.drain_buffer();
+                orders_drained = true;
+            },
+            _ => ()
+        }
+
+        match self.buffered_trades.state {
+            BufferState::FULL | BufferState::FORCEFLUSH => {
+                println!("WARNING: trade buffer must be flushed. Write to the database!");
+
+                // We have to insert orders before trades, since
+                // trades have a foreign key constraint on order_id.
+                if let BufferState::NONEMPTY = self.buffered_orders.state {
+                    let mut categories = TableModCategories::new();
+                    self.buffered_orders.prepare_for_db_update(&mut categories);
+                    BufferCollection::launch_batch_db_updates(&categories, exchange, conn);
+
+                    self.buffered_orders.drain_buffer();
+                    orders_drained = true;
+                }
+
+                database::insert_buffered_trades(&self.buffered_trades.data, conn);
+                self.buffered_trades.drain_buffer();
+            },
+            _ => ()
+        }
+
+        return orders_drained;
+    }
+
+    fn launch_batch_db_updates(categories: &TableModCategories, exchange: &Exchange, conn: &mut Client) {
+        // This has to run first, since other tables have a foreign key constraint
+        // on this table's order_id field.
+        BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
+
+        // TODO: Run these in separate threads?
+        BufferCollection::launch_update_orders(&categories.update_orders, conn); // Typically takes the most time
+        BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
+        BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
+
+        BufferCollection::launch_exchange_stats_update(exchange.total_orders, conn);
+
+        // TODO: We can decrease the computation time for this, see comment
+        //       in prepare_for_db_update.
+        BufferCollection::launch_update_market(&exchange.statistics, conn);
+    }
+
+    /* Entry point for batch inserting unknown orders to database */
+    fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+        database::insert_buffered_orders(orders_to_insert, conn);
+    }
+
+    /* Entry point for batch updating known orders in database */
+    fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+        database::update_buffered_orders(orders_to_update, conn);
+    }
+
+    /* Entry point for batch inserting pending orders for unknown Orders to database  */
+    fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
+        database::insert_buffered_pending(pending_to_insert, conn);
+    }
+
+    /* Entry point for batch deleting pending orders from database  */
+    fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
+        database::delete_buffered_pending(pending_to_delete, conn);
+    }
+
+    /* Entry point for batch market stats updates. */
+    fn launch_exchange_stats_update(total_orders: i32, conn: &mut Client) {
+        database::update_total_orders(total_orders, conn);
+    }
+
+    /* Entry point for batch updating market stats in database  */
+    fn launch_update_market(markets: &HashMap<String, SecStat>, conn: &mut Client) {
+        // Create iterator of modified SecStat's and pass that to DB api.
+        let updated_markets: Vec<&SecStat> = markets.values().filter(|market| market.modified == true).collect();
+        database::update_buffered_markets(&updated_markets, conn);
+    }
+}
