@@ -11,30 +11,6 @@ use crate::exchange::{Exchange, OrderStatus, Trade, Order};
 use crate::exchange::stats::SecStat;
 
 
-/* Just some notes.
- *
- *      1. New accounts can probably still be inserted immediately
- *      2. The "exchangeStats", i.e max order ID, can just be read straight from the exchange
- *      3. Not sure about Markets just yet... probably just have a field in each market
- *         that informs us if it has been modified since the last write!
- *
- *  Ideally, we will spin up some thread whenever we want to perform DB writes so this doesn't
- *  affect program operation. This means we want to move the buffers to the other thread,
- *  essentially draining them in the main thread (not deallocating!).
- *
- *  Somehow, we should run this all in a loop, i.e every n seconds, write the buffer to the DB. Or
- *  instead, once the buffer reaches a certain size (10MB?), write the contents to the DB. It
- *  really depends on:
- *
- *      1. Overall program memory consumption
- *          - If the program is running hot, we will have to decrease the buffer capacity.
- *            However, we can probably control a few things like # users in the cache (evict LRU),
- *            # of pending orders we want to store in each market, etc.
- *      2. Latency of writing to the database.
- *      3. Ability to write to DB by moving buffer to another thread and continuing normal
- *         operations (in this case, we could have a very large buffer).
- **/
-
 /* This struct represents an order that is ready to be written to the database.
  * We make the following distinction between known, and unknown orders:
  *
@@ -178,17 +154,18 @@ impl OrderBuffer {
         }
     }
 
-    /* Gives us access to the internal data buffer. */
-    // pub fn drain_buffer(&mut self) -> hash_map::Drain<'_, i32, DatabaseReadyOrder> {
+    /* This function clears the OrderBuffer.
+     * I think it would be more "Rust-like" to actually call drain()
+     * on the data, returning an iterator for use, but this works so...
+     **/
     pub fn drain_buffer(&mut self) {
         match self.state {
             BufferState::EMPTY => println!("The Order buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => println!("The Order buffer is not full, we can wait before draining."),
-            BufferState::FORCEFLUSH => println!("The Order buffer is being forced to flush."),
+            BufferState::NONEMPTY => println!("The Order buffer was not full, we could have waited before draining."),
+            BufferState::FORCEFLUSH => println!("The Order buffer was forced to flush."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
-        // self.data.drain()
         self.data.clear();
     }
 
@@ -315,17 +292,18 @@ impl TradeBuffer {
         }
     }
 
-    /* Call this when we want to consume the buffer and write it to the database. */
-    // pub fn drain_buffer(&mut self) -> vec::Drain<'_, Trade> {
+    /* This function clears the TradeBuffer.
+     * I think it would be more "Rust-like" to actually call drain()
+     * on the data, returning an iterator for use, but this works so...
+     **/
     pub fn drain_buffer(&mut self) {
         match self.state {
             BufferState::EMPTY => println!("The Trade buffer is empty, there is nothing to drain."),
-            BufferState::NONEMPTY => println!("The Trade buffer is not full, we can wait before draining."),
-            BufferState::FORCEFLUSH => println!("The Trade buffer is being forced to flush."),
+            BufferState::NONEMPTY => println!("The Trade buffer was not full, we could have waited before draining."),
+            BufferState::FORCEFLUSH => println!("The Trade buffer was forced to flush."),
             BufferState::FULL => ()
         }
         self.state = BufferState::EMPTY;
-        // self.data.drain(..)
         self.data.clear();
     }
 
@@ -459,12 +437,10 @@ impl BufferCollection {
     fn launch_batch_db_updates(categories: &TableModCategories, exchange: &Exchange, conn: &mut Client) {
         // This has to run first, since other tables have a foreign key constraint
         // on this table's order_id field.
-
-        // TODO: Would it decrease insert time to sort the insert_orders?
         BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
 
-        // TODO: Run these in separate threads
-        BufferCollection::launch_update_orders(&categories.update_orders, conn);
+        // TODO: Run these in separate threads?
+        BufferCollection::launch_update_orders(&categories.update_orders, conn); // Typically takes the most time
         BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
         BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
 

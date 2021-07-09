@@ -36,19 +36,25 @@ fn main() {
     users.direct_update_total(&mut client);
     let user_count = user_count.elapsed().as_millis();
 
-    /* TODO: Top N buys and sells in each market, rather than all.
-     *       This decreases the amount of RAM, increases the computation speed.
+    /* TODO: Should we store the top N buys and sells in each market, rather than all?
+     *       This would decrease the amount of RAM, and increases the computation speed.
+     *       I think this needs to wait for a move to Redis, as we currently read users
+     *       pending orders into their accounts by pulling this data
+     *          - (see fetch_account_pending_orders).
      **/
     println!("Getting markets.");
     let market_time = Instant::now();
     database::populate_exchange_markets(&mut exchange, &mut client);    // Fill the pending orders of the markets
     let market_time = market_time.elapsed().as_millis();
+
     let stats_time = Instant::now();
     database::populate_market_statistics(&mut exchange, &mut client);   // Fill the statistics for each market
     let stats_time = stats_time.elapsed().as_millis();
+
     let x_stats_time = Instant::now();
     database::populate_exchange_statistics(&mut exchange, &mut client); // Fill the statistics for the exchange
     let x_stats_time = x_stats_time.elapsed().as_millis();
+
     let has_trades_time = Instant::now();
     database::populate_has_trades(&mut exchange, &mut client);          // Fill the has_trades map for the exchange
     let has_trades_time = has_trades_time.elapsed().as_millis();
@@ -71,9 +77,15 @@ fn main() {
     };
 
     // Set sigINT/sigTERM handlers
-    // TODO: Apparently we can't just read the mut ref.
-    //       Rustc thinks that the buffer, exchange, and client may go out of scope
-    //       before this thread triggers the flush.
+    // TODO: If we want the sigINT handler thread to be capable of flushing the buffers, we'll need
+    // to share the buffers with it. To do this, we will have to wrap the buffers inside a mutex
+    // and wrap the mutex in an Arc.
+    //
+    // This might not be too technically difficult, but I'm not sure I like the behaviour:
+    //  -  It implies that we can shut the exchange while an order is being processed, potentially
+    //     resulting in inconsistent state.
+    //  -  To solve this, we would have to have some other shared var that says the state is
+    //     consistent, and since we're shutting down no more orders can be placed.
     ctrlc::set_handler(|| {
         println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
     }).expect("Error setting Ctrl-C handler");

@@ -492,8 +492,5 @@ impl Exchange {
                 }
             }
         }
-
-        // If you want prints of each users account, uncomment this.
-        // users.print_all();
     }
 }

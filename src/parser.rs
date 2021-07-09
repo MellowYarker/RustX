@@ -52,6 +52,7 @@ fn malformed_req(req: &str, req_type: &str) {
        "info"       => eprintln!("Hint - format should be: {} symbol", req),
        "sim"        => eprintln!("Hint - format should be: {} trader_count market_count duration", req),
        "upgrade_db" => eprintln!("Hint - format should be: {} file_path username password", req),
+       "exit"       => eprintln!("Hint - format should be: EXIT"),
        _            => ()
     }
 }
@@ -215,6 +216,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
             if words.len() == 1 {
                 return Ok(Request::ExitReq)
             }
+            malformed_req(&words[0], &words[0]);
             return Err(());
         }
         // request instructions

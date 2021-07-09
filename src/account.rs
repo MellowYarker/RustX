@@ -57,7 +57,8 @@ impl AccountPendingOrders {
 
     /* After we've fetched this accounts pending orders, we call this to update the
      * state of the account. This just lets the program know we don't need to fetch
-     * the orders again until the account is evicted from the cache.*/
+     * the orders again until the account is evicted from the cache.
+     **/
     pub fn update_after_fetch(&mut self) {
         self.is_complete = true;
     }
@@ -75,6 +76,9 @@ impl AccountPendingOrders {
         return None;
     }
 
+    /* Removes a pending order from the Account.
+     * The order IS in a market.
+     **/
     pub fn remove_order(&mut self, symbol: &str, id: i32) {
         let market = self.get_mut_market(symbol);
         market.remove(&id);
@@ -177,6 +181,7 @@ You called validate_order on an account with in-complete pending order data.");
         return (true, None);
     }
 
+    /* If the order is in the cache, we return its action (buy/sell), else None. */
     fn check_pending_order_cache(&self, symbol: &String, id: i32) -> Option<String> {
         if !self.pending_orders.is_complete {
             panic!("Tried to check pending order cache but the account does not have up to date pending orders.");
@@ -191,7 +196,7 @@ You called validate_order on an account with in-complete pending order data.");
 
     /* Check if the user with the given username owns a pending order with this id.
      * If they do, return the order's action.
-     * */
+     **/
     pub fn user_placed_pending_order(&self, symbol: &String, id: i32, conn: &mut Client) -> Option<String> {
         match self.check_pending_order_cache(symbol, id) {
             Some(action) => return Some(action),
@@ -259,7 +264,7 @@ You called validate_order on an account with in-complete pending order data.");
 //
 //          Since orders (and eventually most things) are associated with users by user_ID,
 //          and the users don't know their ID until we have a proper frontend that can memorize
-//          that data, we'll need to change our datastructures.
+//          that data, we'll need to change our data structures.
 // ------------------------------------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct Users {
@@ -662,17 +667,5 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update
-    }
-
-    pub fn print_all(&self) {
-        println!("PRINT_ALL UNDER CONSUTRUCTION DURING DB MIGRATION");
-        /*
-        for (k, v) in self.users.iter() {
-            match self.authenticate(&k, &v.password) {
-                Ok(_) => self.print_user(&k, true),
-                Err(_) => ()
-            }
-        }
-        */
     }
 }
