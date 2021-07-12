@@ -442,7 +442,7 @@ impl Users {
                 Ok(account) => {
                     // If we fail to cache the user, flush the buffers so we can evict users.
                     if !self.cache_user(account.clone()) {
-                        buffers.force_flush(exchange, conn);
+                        buffers.force_flush(exchange);
                         self.reset_users_modified();
 
                         // Set all market stats modified to false
@@ -523,7 +523,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
                 if !self.cache_user(account.clone()) {
                     // If we fail to evict a user, flush the buffers and try again.
-                    buffers.force_flush(exchange, conn);
+                    buffers.force_flush(exchange);
                     self.reset_users_modified();
 
                     // Set all market stats modified to false

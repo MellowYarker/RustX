@@ -169,9 +169,9 @@ fn main() {
             }
 
             // Make sure our buffer states are accurate.
-            buffers.update_buffer_states(&exchange, &mut client);
+            buffers.update_buffer_states();
             // If order buffer was drained, we can reset our cached values modified field.
-            if buffers.transmit_buffer_data(&exchange, &mut client) {
+            if buffers.transmit_buffer_data(&exchange) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in exchange.statistics.iter_mut() {
@@ -217,9 +217,9 @@ fn main() {
             parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
 
             // Make sure our buffer states are accurate.
-            buffers.update_buffer_states(&exchange, &mut client);
+            buffers.update_buffer_states();
             // If order buffer was drained, we can reset our cached values modified field.
-            if buffers.transmit_buffer_data(&exchange, &mut client) {
+            if buffers.transmit_buffer_data(&exchange) {
                 users.reset_users_modified();
 
                 // Set all market stats modified to false

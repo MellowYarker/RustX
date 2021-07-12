@@ -365,7 +365,7 @@ impl BufferCollection {
         self.tx = Some(tx);
     }
 
-    pub fn force_flush(&mut self, exchange: &Exchange, conn: &mut Client) {
+    pub fn force_flush(&mut self, exchange: &Exchange) {
         match self.buffered_orders.state {
             BufferState::FULL |
             BufferState::NONEMPTY |
@@ -384,20 +384,20 @@ impl BufferCollection {
             _ => println!("Trades buffer empty, nothing to flush.")
         }
 
-        self.transmit_buffer_data(exchange, conn);
+        self.transmit_buffer_data(exchange);
     }
 
-    pub fn flush_on_shutdown(&mut self, exchange: &Exchange, conn: &mut Client) {
-        self.update_buffer_states(exchange, conn);
+    pub fn flush_on_shutdown(&mut self, exchange: &Exchange) {
+        self.update_buffer_states();
 
-        self.force_flush(exchange, conn);
-        println!("Shutdown request has been propogated.");
+        self.force_flush(exchange);
+        println!("Shutdown request has been propagated.");
     }
 
     /* Sends the buffer data down the channel for the other thread to handle.
      * Returns true if the order buffer was drained, false otherwise.
      **/
-    pub fn transmit_buffer_data(&mut self, exchange: &Exchange, conn: &mut Client) -> bool{
+    pub fn transmit_buffer_data(&mut self, exchange: &Exchange) -> bool{
         let mut orders_drained = false;
         let mut pending_updates = false;
         let mut categories = UpdateCategories::new();
@@ -440,7 +440,7 @@ impl BufferCollection {
     }
 
     /* If our buffers are close to capacity, we will update their state to full. */
-    pub fn update_buffer_states(&mut self, exchange: &Exchange, conn: &mut Client) {
+    pub fn update_buffer_states(&mut self) {
         self.buffered_orders.update_space_remaining();
         self.buffered_trades.update_space_remaining();
     }
