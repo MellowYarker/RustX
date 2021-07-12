@@ -391,7 +391,7 @@ Please change the price of your order so that it cannot fill the following pendi
         Request::ExitReq => {
             println!("Initiating graceful shutdown...");
             buffers.flush_on_shutdown(exchange, conn);
-            println!("Buffers flushed, shutdown complete.");
+            buffers.tx.as_ref().unwrap().send(None).unwrap();
         }
     }
 }

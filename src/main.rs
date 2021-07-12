@@ -10,13 +10,16 @@ pub mod database;
 
 pub use crate::exchange::{Exchange, Market, Request};
 pub use crate::account::{Users};
-pub use crate::buffer::BufferCollection;
+pub use crate::buffer::{BufferCollection, UpdateCategories};
 
 use std::env;
 use std::process;
 use std::io::{self, prelude::*};
 
 use postgres::{Client, NoTls};
+
+use std::thread;
+use std::sync::mpsc;
 
 use std::time::Instant;
 
@@ -90,6 +93,54 @@ fn main() {
         println!("Please use the EXIT command, still figuring out how to do a controlled shutdown...");
     }).expect("Error setting Ctrl-C handler");
 
+
+    let (tx, rx) = mpsc::channel();
+    buffers.set_transmitter(tx);
+
+    /* This thread's job is to read categorized buffer data and write it to the database.
+     *
+     * It behaves in the following way:
+     *  1. TODO: Set up worker threads and additional channels
+     *  loop {
+     *      2.  Read the categories, if we got None, we must shutdown immediately.
+     *      3.  If we got Some(data), send each component to the appropriate worker thread
+     *          to be written to the database.
+     *  }
+     *
+     * TODO: Currently, we do not set up additional threads, we do step 3 in this thread entirely.
+     *
+     **/
+    let handler = thread::spawn(move || {
+        // TODO: Set up other threads and channels!
+        println!("[Buffer Thread]: Initializing database connections and worker threads....");
+        let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
+            .expect("Failed to connect to Database. Please ensure it is up and running.");
+        println!("[Buffer Thread]: Setup complete.");
+
+        loop {
+            let categories: UpdateCategories = match rx.recv() {
+                Ok(option) => match option {
+                    Some(data) => data,
+                    // We write None to channel on shutdown.
+                    // Better way would be to close Sender, but I'm having trouble with that...
+                    None => {
+                        println!("[Buffer Thread]: received shutdown request.");
+                        drop(rx);
+                        return;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return;
+                }
+            };
+
+            println!("[BUFFER THREAD]: Initiating database writes.");
+            BufferCollection::launch_batch_db_updates(&categories, &mut conn);
+
+        }
+    });
+
     // Read from file mode
     if !argument.interactive {
         for line in argument.reader.unwrap().lines() {
@@ -106,13 +157,21 @@ fn main() {
 
                     println!("Servicing Request: {}", raw);
                     // Our input has been validated. We can now attempt to service the request.
+                    // If we got an exit request, exit the loop and treat it like EOF.
+                    if let Request::ExitReq = request {
+                        break;
+                    }
+
+                    // Our input has been validated. We can now attempt to service the request.
                     parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
                 },
                 Err(_) => return
             }
 
             // Make sure our buffer states are accurate.
-            if buffers.update_buffer_states(&exchange, &mut client) {
+            buffers.update_buffer_states(&exchange, &mut client);
+            // If order buffer was drained, we can reset our cached values modified field.
+            if buffers.transmit_buffer_data(&exchange, &mut client) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in exchange.statistics.iter_mut() {
@@ -121,7 +180,8 @@ fn main() {
             }
         }
 
-        buffers.flush_on_shutdown(&exchange, &mut client);
+        let exit = Request::ExitReq;
+        parser::service_request(exit, &mut exchange, &mut users, &mut buffers, &mut client);
     } else {
         // User interface version
         println!("
@@ -147,17 +207,19 @@ fn main() {
                 Err(_)  => continue
             };
 
-            // If we got an exit request, service it an exit.
+            // If we got an exit request, service it and exit loop.
             if let Request::ExitReq = request {
                 parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
-                return;
+                break;
             }
 
             // Our input has been validated. We can now attempt to service the request.
             parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
 
             // Make sure our buffer states are accurate.
-            if buffers.update_buffer_states(&exchange, &mut client) {
+            buffers.update_buffer_states(&exchange, &mut client);
+            // If order buffer was drained, we can reset our cached values modified field.
+            if buffers.transmit_buffer_data(&exchange, &mut client) {
                 users.reset_users_modified();
 
                 // Set all market stats modified to false
@@ -167,6 +229,10 @@ fn main() {
             }
         }
     }
+
+    // Wait for the buffer thread to complete.
+    handler.join().unwrap();
+    println!("\nShutdown sequence complete. Goodbye!");
 }
 
 pub fn print_instructions() {
