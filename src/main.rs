@@ -23,6 +23,25 @@ use std::sync::mpsc;
 
 use std::time::Instant;
 
+
+// Helps us determine what each thread will work on.
+pub enum Category {
+    INSERT_NEW,
+    UPDATE_KNOWN,
+    INSERT_PENDING,
+    DELETE_PENDING,
+    UPDATE_TOTAL,
+    UPDATE_MARKET_STATS,
+    INSERT_NEW_TRADES
+}
+
+// Helps manage the workload.
+pub struct WorkerThreads<T> {
+    pub threads: Vec<thread::JoinHandle<T>>, // Holds thread handles
+    pub channels: Vec<mpsc::Sender<(UpdateCategories, Category)>>, // These are special, as only 1 category will have data.
+    pub insert_orders_response: mpsc::Receiver<bool> // When insert order worker is done, it writes true to channel.
+}
+
 fn main() {
     let mut exchange = Exchange::new();  // Our central exchange, everything happens here.
     let mut users    = Users::new();     // All our users are stored here.
@@ -111,10 +130,72 @@ fn main() {
      *
      **/
     let handler = thread::spawn(move || {
-        // TODO: Set up other threads and channels!
+
         println!("[Buffer Thread]: Initializing database connections and worker threads....");
-        let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
-            .expect("Failed to connect to Database. Please ensure it is up and running.");
+        let (insert_orders_thread_transmitter, insert_orders_thread_receiver) = mpsc::channel();
+
+        let mut workers = WorkerThreads {
+            threads: Vec::new(),
+            channels: Vec::new(),
+            insert_orders_response: insert_orders_thread_receiver
+        };
+
+        // Move tx to workers, receiver to new thread.
+        let (transmitter, receiver) = mpsc::channel();
+        workers.channels.push(transmitter);
+
+        // This is the insert orders thread, it's special because it makes a response.
+        workers.threads.push(thread::spawn(move || {
+            let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
+                .expect("Failed to connect to Database. Please ensure it is up and running.");
+            let responder = insert_orders_thread_transmitter;
+
+            loop {
+                let data: UpdateCategories = match receiver.recv() {
+                    Ok((data, _)) => data,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        return;
+                    }
+                };
+
+                // Insert the new trades, then tell the spawning thread what happened.
+                BufferCollection::launch_insert_orders(&data.insert_orders, &mut conn);
+                responder.send(true).unwrap();
+            }
+        }));
+
+        // Create the other threads, they don't respond to the Buffer thread so we generalize.
+        for _ in 0..6 {
+            // Set up a channel to talk to the new thread, add it to workers struct.
+            let (transmitter, receiver) = mpsc::channel();
+            workers.channels.push(transmitter);
+            let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
+                .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+            workers.threads.push(thread::spawn(move || {
+                loop {
+                    let (data, category_type): (UpdateCategories, Category) = match receiver.recv() {
+                        Ok((data, category_type)) => (data, category_type),
+                        Err(e) => {
+                            eprintln!("{}", e);
+                            return;
+                        }
+                    };
+                    // Perform the database write here depending on the type of category.
+                    match category_type {
+                        Category::INSERT_NEW            => (),
+                        Category::UPDATE_KNOWN          => BufferCollection::launch_update_orders(&data.update_orders, &mut conn),
+                        Category::INSERT_PENDING        => BufferCollection::launch_insert_pending_orders(&data.insert_pending, &mut conn),
+                        Category::DELETE_PENDING        => BufferCollection::launch_delete_pending_orders(&data.delete_pending, &mut conn),
+                        Category::UPDATE_TOTAL          => BufferCollection::launch_exchange_stats_update(data.total_orders, &mut conn),
+                        Category::UPDATE_MARKET_STATS   => BufferCollection::launch_update_market(&data.update_markets, &mut conn),
+                        Category::INSERT_NEW_TRADES     => BufferCollection::launch_insert_trades(&data.insert_trades, &mut conn)
+                    }
+                }
+            }));
+        }
+
         println!("[Buffer Thread]: Setup complete.");
 
         loop {
@@ -126,6 +207,13 @@ fn main() {
                     None => {
                         println!("[Buffer Thread]: received shutdown request.");
                         drop(rx);
+                        println!("[Buffer Thread]: waiting on worker threads to complete...");
+                        for tx in workers.channels {
+                            drop(tx);
+                        }
+                        for handle in workers.threads {
+                            handle.join().unwrap();
+                        }
                         return;
                     }
                 },
@@ -136,7 +224,7 @@ fn main() {
             };
 
             println!("[BUFFER THREAD]: Initiating database writes.");
-            BufferCollection::launch_batch_db_updates(&categories, &mut conn);
+            BufferCollection::launch_batch_db_updates(&categories, &mut workers);
 
         }
     });

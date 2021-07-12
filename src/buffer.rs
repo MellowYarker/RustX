@@ -11,6 +11,8 @@ use crate::database;
 use crate::exchange::{Exchange, OrderStatus, Trade, Order};
 use crate::exchange::stats::SecStat;
 
+use crate::{WorkerThreads, Category};
+
 
 /* This struct represents an order that is ready to be written to the database.
  * We make the following distinction between known, and unknown orders:
@@ -102,14 +104,14 @@ impl DatabaseReadyOrder {
 
 #[derive(Debug)]
 pub struct UpdateCategories {
-    insert_orders: Vec<DatabaseReadyOrder>,
-    update_orders: Vec<DatabaseReadyOrder>,
-    total_orders: i32,
-    insert_pending: Vec<i32>,
-    delete_pending: Vec<i32>,
-    markets_modified: HashMap<String, ()>, // Just store symbols of modified markets
-    insert_trades: Vec<Trade>,
-    update_markets: Vec<SecStat>
+    pub insert_orders: Vec<DatabaseReadyOrder>,
+    pub update_orders: Vec<DatabaseReadyOrder>,
+    pub total_orders: i32,
+    pub insert_pending: Vec<i32>,
+    pub delete_pending: Vec<i32>,
+    pub markets_modified: HashMap<String, ()>, // Just store symbols of modified markets
+    pub insert_trades: Vec<Trade>,
+    pub update_markets: Vec<SecStat>
 }
 
 impl UpdateCategories {
@@ -445,10 +447,8 @@ impl BufferCollection {
         self.buffered_trades.update_space_remaining();
     }
 
-    /* TODO: Pass a vec of transmitters so we can write each category to its respective thread.
-     *
-     * Currently, we do as follows:
-     *      1. Insert new orders, as many tables use order_id as a FK.
+    /* This function launches the following database operations:
+     *      1. Insert new orders, many tables use order_id as a FK so it must occur first.
      *      2. Update known orders
      *      3. Insert new pending orders
      *      4. Delete old pending orders
@@ -456,64 +456,98 @@ impl BufferCollection {
      *      6. Update Markets stats.
      *      7. Insert the new trades
      *
-     * However, we can actually run items 2-7 concurrently, we just need (1)
-     * to finish first. I want to approach this concurrent writes in the following way:
+     * We can actually run items 2-7 concurrently, we just need (1)
+     * to finish first. We approach concurrent writes in the following way:
      *
      *      1. Send insert_orders to the thread that inserts new orders, wait for a response.
      *      2. Send ALL other categories to their respective threads to be inserted.
      *      3. We DO NOT need to wait for these threads to complete.
      **/
-    pub fn launch_batch_db_updates(categories: &UpdateCategories, conn: &mut Client) {
-        // This has to run first, since other tables have a foreign key constraint
-        // on this table's order_id field.
-        BufferCollection::launch_insert_orders(&categories.insert_orders, conn);
+    pub fn launch_batch_db_updates<T>(categories: &UpdateCategories, workers: &mut WorkerThreads<T>) {
 
-        // TODO: ALL the remaining can run in separate threads.
-        BufferCollection::launch_update_orders(&categories.update_orders, conn); // Typically takes the most time
-        BufferCollection::launch_insert_pending_orders(&categories.insert_pending, conn);
-        BufferCollection::launch_delete_pending_orders(&categories.delete_pending, conn);
+        // 1. Write to worker 1
+        let tx = workers.channels.get(0).unwrap();
+        let mut insert_container = UpdateCategories::new();
+        insert_container.insert_orders = categories.insert_orders.clone();
+        tx.send((insert_container, Category::INSERT_NEW)).unwrap();
 
-        // BufferCollection::launch_exchange_stats_update(exchange.total_orders, conn);
-        BufferCollection::launch_exchange_stats_update(categories.total_orders, conn);
+        // 2. Wait for response 'true' from insert thread
+        if workers.insert_orders_response.recv().unwrap() {
+            // Send corresponding data to each worker thread
+            // 2. update orders
+            let tx = workers.channels.get(1).unwrap();
+            let mut update_order_container = UpdateCategories::new();
+            update_order_container.update_orders = categories.update_orders.clone();
+            tx.send((update_order_container, Category::UPDATE_KNOWN)).unwrap();
 
+            // 3. insert pending
+            let tx = workers.channels.get(2).unwrap();
+            let mut insert_pending_container = UpdateCategories::new();
+            insert_pending_container.insert_pending = categories.insert_pending.clone();
+            tx.send((insert_pending_container, Category::INSERT_PENDING)).unwrap();
+
+            // 4. delete pending
+            let tx = workers.channels.get(3).unwrap();
+            let mut delete_pending_container = UpdateCategories::new();
+            delete_pending_container.delete_pending = categories.delete_pending.clone();
+            tx.send((delete_pending_container, Category::DELETE_PENDING)).unwrap();
+
+            // 5. update exchange stats
+            let tx = workers.channels.get(4).unwrap();
+            let mut update_total_container = UpdateCategories::new();
+            update_total_container.total_orders = categories.total_orders.clone();
+            tx.send((update_total_container, Category::UPDATE_TOTAL)).unwrap();
+
+            // 6. update market stats
+            let tx = workers.channels.get(5).unwrap();
+            let mut update_market_container = UpdateCategories::new();
+            update_market_container.update_markets = categories.update_markets.clone();
+            tx.send((update_market_container, Category::UPDATE_MARKET_STATS)).unwrap();
+
+            // 7. insert new trades
+            let tx = workers.channels.get(6).unwrap();
+            let mut insert_trades_container = UpdateCategories::new();
+            insert_trades_container.insert_trades = categories.insert_trades.clone();
+            tx.send((insert_trades_container, Category::INSERT_NEW_TRADES)).unwrap();
+        }
+        /*
         // TODO: We can decrease the computation time for this, see comment
         //       in prepare_for_db_update.
         BufferCollection::launch_update_market(&categories.update_markets, conn);
-
-        BufferCollection::launch_insert_trades(&categories.insert_trades, conn);
+        */
     }
 
     /* Entry point for batch inserting unknown orders to database */
-    fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+    pub fn launch_insert_orders(orders_to_insert: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
         database::insert_buffered_orders(orders_to_insert, conn);
     }
 
     /* Entry point for batch updating known orders in database */
-    fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
+    pub fn launch_update_orders(orders_to_update: &Vec<DatabaseReadyOrder>, conn: &mut Client) {
         database::update_buffered_orders(orders_to_update, conn);
     }
 
     /* Entry point for batch inserting pending orders for unknown Orders to database  */
-    fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
+    pub fn launch_insert_pending_orders(pending_to_insert: &Vec<i32>, conn: &mut Client) {
         database::insert_buffered_pending(pending_to_insert, conn);
     }
 
     /* Entry point for batch deleting pending orders from database  */
-    fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
+    pub fn launch_delete_pending_orders(pending_to_delete: &Vec<i32>, conn: &mut Client) {
         database::delete_buffered_pending(pending_to_delete, conn);
     }
 
     /* Entry point for batch market stats updates. */
-    fn launch_exchange_stats_update(total_orders: i32, conn: &mut Client) {
+    pub fn launch_exchange_stats_update(total_orders: i32, conn: &mut Client) {
         database::update_total_orders(total_orders, conn);
     }
 
     /* Entry point for batch updating market stats in database  */
-    fn launch_update_market(update_markets: &Vec<SecStat>, conn: &mut Client) {
+    pub fn launch_update_market(update_markets: &Vec<SecStat>, conn: &mut Client) {
         database::update_buffered_markets(&update_markets, conn);
     }
 
-    fn launch_insert_trades(trades_to_insert: &Vec<Trade>, conn: &mut Client) {
+    pub fn launch_insert_trades(trades_to_insert: &Vec<Trade>, conn: &mut Client) {
         database::insert_buffered_trades(trades_to_insert, conn);
     }
 }
