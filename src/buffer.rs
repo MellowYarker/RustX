@@ -461,54 +461,69 @@ impl BufferCollection {
      *
      *      1. Send insert_orders to the thread that inserts new orders, wait for a response.
      *      2. Send ALL other categories to their respective threads to be inserted.
-     *      3. We DO NOT need to wait for these threads to complete.
+     *      3. Wait for these threads to complete before returning.
+     *
+     * TODO: We seem to be running each query much slower concurrently than sequentially.
+     *       I've checked, and it seems absolutely clear that each category writes to
+     *       distinct rows, so we shouldn't have any problems with row contention.
      **/
     pub fn launch_batch_db_updates<T>(categories: &UpdateCategories, workers: &mut WorkerThreads<T>) {
 
         // 1. Write to worker 1
-        let tx = workers.channels.get(0).unwrap();
+        let tx = workers.senders.get(0).unwrap();
         let mut insert_container = UpdateCategories::new();
         insert_container.insert_orders = categories.insert_orders.clone();
         tx.send((insert_container, Category::INSERT_NEW)).unwrap();
 
         // 2. Wait for response 'true' from insert thread
-        if workers.insert_orders_response.recv().unwrap() {
+        if workers.receivers.get(0).unwrap().recv().unwrap() {
             // Send corresponding data to each worker thread
             // 2. update orders
-            let tx = workers.channels.get(1).unwrap();
+            let tx = workers.senders.get(1).unwrap();
             let mut update_order_container = UpdateCategories::new();
             update_order_container.update_orders = categories.update_orders.clone();
             tx.send((update_order_container, Category::UPDATE_KNOWN)).unwrap();
 
             // 3. insert pending
-            let tx = workers.channels.get(2).unwrap();
+            let tx = workers.senders.get(2).unwrap();
             let mut insert_pending_container = UpdateCategories::new();
             insert_pending_container.insert_pending = categories.insert_pending.clone();
             tx.send((insert_pending_container, Category::INSERT_PENDING)).unwrap();
 
             // 4. delete pending
-            let tx = workers.channels.get(3).unwrap();
+            let tx = workers.senders.get(3).unwrap();
             let mut delete_pending_container = UpdateCategories::new();
             delete_pending_container.delete_pending = categories.delete_pending.clone();
             tx.send((delete_pending_container, Category::DELETE_PENDING)).unwrap();
 
             // 5. update exchange stats
-            let tx = workers.channels.get(4).unwrap();
+            let tx = workers.senders.get(4).unwrap();
             let mut update_total_container = UpdateCategories::new();
             update_total_container.total_orders = categories.total_orders.clone();
             tx.send((update_total_container, Category::UPDATE_TOTAL)).unwrap();
 
             // 6. update market stats
-            let tx = workers.channels.get(5).unwrap();
+            let tx = workers.senders.get(5).unwrap();
             let mut update_market_container = UpdateCategories::new();
             update_market_container.update_markets = categories.update_markets.clone();
             tx.send((update_market_container, Category::UPDATE_MARKET_STATS)).unwrap();
 
             // 7. insert new trades
-            let tx = workers.channels.get(6).unwrap();
+            let tx = workers.senders.get(6).unwrap();
             let mut insert_trades_container = UpdateCategories::new();
             insert_trades_container.insert_trades = categories.insert_trades.clone();
             tx.send((insert_trades_container, Category::INSERT_NEW_TRADES)).unwrap();
+
+            // Iterate over the received responses, this is like doing a thread join,
+            // except with message passing. We're effectively waiting for all threads
+            // to finish their work.
+            let mut write_responses = workers.receivers.iter();
+            write_responses.next(); // Skip the first because we already read it
+            for response in write_responses {
+                if response.recv().unwrap() {
+                    continue;
+                }
+            }
         }
         /*
         // TODO: We can decrease the computation time for this, see comment

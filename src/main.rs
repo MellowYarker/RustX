@@ -39,8 +39,8 @@ pub enum Category {
 // Helps manage the workload.
 pub struct WorkerThreads<T> {
     pub threads: Vec<thread::JoinHandle<T>>, // Holds thread handles
-    pub channels: Vec<mpsc::Sender<(UpdateCategories, Category)>>, // These are special, as only 1 category will have data.
-    pub insert_orders_response: mpsc::Receiver<bool> // When insert order worker is done, it writes true to channel.
+    pub senders: Vec<mpsc::Sender<(UpdateCategories, Category)>>, // Each thread receives only 1 category, all others are empty.
+    pub receivers: Vec<mpsc::Receiver<bool>> // When a thread is finished flushing it's category, it writes `true` to the channel.
 }
 
 fn main() {
@@ -119,55 +119,33 @@ fn main() {
     /* This thread's job is to read categorized buffer data and write it to the database.
      *
      * It behaves in the following way:
-     *  1. TODO: Set up worker threads and additional channels
+     *  1. Set up worker threads and additional channels
      *  loop {
      *      2.  Read the categories, if we got None, we must shutdown immediately.
      *      3.  If we got Some(data), send each component to the appropriate worker thread
      *          to be written to the database.
      *  }
      *
-     * TODO: Currently, we do not set up additional threads, we do step 3 in this thread entirely.
-     *
      **/
     let handler = thread::spawn(move || {
 
-        let (insert_orders_thread_transmitter, insert_orders_thread_receiver) = mpsc::channel();
-
         let mut workers = WorkerThreads {
             threads: Vec::new(),
-            channels: Vec::new(),
-            insert_orders_response: insert_orders_thread_receiver
+            senders: Vec::new(),
+            receivers: Vec::new()
         };
 
-        // Move tx to workers, receiver to new thread.
-        let (transmitter, receiver) = mpsc::channel();
-        workers.channels.push(transmitter);
-
-        // This is the insert orders thread, it's special because it makes a response.
-        workers.threads.push(thread::spawn(move || {
-            let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
-                .expect("Failed to connect to Database. Please ensure it is up and running.");
-            let responder = insert_orders_thread_transmitter;
-
-            loop {
-                let data: UpdateCategories = match receiver.recv() {
-                    Ok((data, _)) => data,
-                    Err(e) => {
-                        return;
-                    }
-                };
-
-                // Insert the new trades, then tell the spawning thread what happened.
-                BufferCollection::launch_insert_orders(&data.insert_orders, &mut conn);
-                responder.send(true).unwrap();
-            }
-        }));
-
-        // Create the other threads, they don't respond to the Buffer thread so we generalize.
-        for _ in 0..6 {
-            // Set up a channel to talk to the new thread, add it to workers struct.
+        // These are our worker threads. The buffer handling thread
+        // will write each category to its respective worker thread to be
+        // written to the database.
+        for _ in 0..7 {
+            // Set up the transmitter x receiver channel for sending data to worker,
+            // then set up response channel to get `true` message of completion.
             let (transmitter, receiver) = mpsc::channel();
-            workers.channels.push(transmitter);
+            let (response_tx, response_rx) = mpsc::channel();
+            workers.senders.push(transmitter);
+            workers.receivers.push(response_rx);
+
             let mut conn = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
                 .expect("Failed to connect to Database. Please ensure it is up and running.");
 
@@ -179,9 +157,10 @@ fn main() {
                             return;
                         }
                     };
+
                     // Perform the database write here depending on the type of category.
                     match category_type {
-                        Category::INSERT_NEW            => (),
+                        Category::INSERT_NEW            => BufferCollection::launch_insert_orders(&data.insert_orders, &mut conn),
                         Category::UPDATE_KNOWN          => BufferCollection::launch_update_orders(&data.update_orders, &mut conn),
                         Category::INSERT_PENDING        => BufferCollection::launch_insert_pending_orders(&data.insert_pending, &mut conn),
                         Category::DELETE_PENDING        => BufferCollection::launch_delete_pending_orders(&data.delete_pending, &mut conn),
@@ -189,10 +168,15 @@ fn main() {
                         Category::UPDATE_MARKET_STATS   => BufferCollection::launch_update_market(&data.update_markets, &mut conn),
                         Category::INSERT_NEW_TRADES     => BufferCollection::launch_insert_trades(&data.insert_trades, &mut conn)
                     }
+                    // Return the successful response message
+                    response_tx.send(true).unwrap();
                 }
             }));
         }
 
+        // This is the main loop for the Buffer handling thread.
+        // We read the categories from the main thread, then send them
+        // to the worker threads. On shutdown, we clean everything up.
         loop {
             let categories: UpdateCategories = match rx.recv() {
                 Ok(option) => match option {
@@ -203,7 +187,8 @@ fn main() {
                         dark_blue!("[Buffer Thread]: received shutdown request.\n");
                         drop(rx);
                         dark_blue!("[Buffer Thread]: waiting on worker threads to complete...\n");
-                        for tx in workers.channels {
+
+                        for tx in workers.senders {
                             drop(tx);
                         }
                         for handle in workers.threads {
@@ -219,7 +204,7 @@ fn main() {
 
             dark_blue!("[BUFFER THREAD]: Initiating database writes.\n");
             BufferCollection::launch_batch_db_updates(&categories, &mut workers);
-
+            dark_blue!("[BUFFER THREAD]: Writes successfully flushed.\n");
         }
     });
 
