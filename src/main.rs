@@ -1,6 +1,7 @@
 #[macro_use] extern crate random_number;
 extern crate chrono;
 extern crate ctrlc;
+#[macro_use] extern crate colour;
 
 pub mod exchange;
 pub mod parser;
@@ -50,7 +51,7 @@ fn main() {
     let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
 
-    println!("Connected to database.");
+    dark_green!("Connected to database.\n");
 
     let start = Instant::now();
     let user_count = Instant::now();
@@ -64,31 +65,30 @@ fn main() {
      *       pending orders into their accounts by pulling this data
      *          - (see fetch_account_pending_orders).
      **/
-    println!("Getting markets.");
+    println!("Initializing exchange...");
+    dark_green!("\tTime elapsed to get user count: {} ms\n", user_count);
     let market_time = Instant::now();
     database::populate_exchange_markets(&mut exchange, &mut client);    // Fill the pending orders of the markets
     let market_time = market_time.elapsed().as_millis();
+    dark_green!("\tTime elapsed to populate markets: {} ms\n", market_time);
 
     let stats_time = Instant::now();
     database::populate_market_statistics(&mut exchange, &mut client);   // Fill the statistics for each market
     let stats_time = stats_time.elapsed().as_millis();
+    dark_green!("\tTime elapsed to populate market stats: {} ms\n", stats_time);
 
     let x_stats_time = Instant::now();
     database::populate_exchange_statistics(&mut exchange, &mut client); // Fill the statistics for the exchange
     let x_stats_time = x_stats_time.elapsed().as_millis();
+    dark_green!("\tTime elapsed to populate exchange stats: {} ms\n", x_stats_time);
 
     let has_trades_time = Instant::now();
     database::populate_has_trades(&mut exchange, &mut client);          // Fill the has_trades map for the exchange
     let has_trades_time = has_trades_time.elapsed().as_millis();
+    dark_green!("\tTime elapsed to populate has_trades: {} ms\n", has_trades_time);
 
     let end = start.elapsed().as_millis();
-    println!("Populated users, markets, and statistics.");
-    println!("\tTime elapsed to get user count: {} ms", user_count);
-    println!("\tTime elapsed to populate markets: {} ms", market_time);
-    println!("\tTime elapsed to populate market stats: {} ms", stats_time);
-    println!("\tTime elapsed to populate exchange stats: {} ms", x_stats_time);
-    println!("\tTime elapsed to populate has_trades: {} ms", has_trades_time);
-    println!("\nTotal Setup Time elapsed : {} ms", end);
+    dark_green!("\nTotal Setup Time elapsed : {} ms\n", end);
 
     let argument = match parser::command_args(env::args()) {
         Ok(arg) => arg,
@@ -131,7 +131,6 @@ fn main() {
      **/
     let handler = thread::spawn(move || {
 
-        println!("[Buffer Thread]: Initializing database connections and worker threads....");
         let (insert_orders_thread_transmitter, insert_orders_thread_receiver) = mpsc::channel();
 
         let mut workers = WorkerThreads {
@@ -154,7 +153,6 @@ fn main() {
                 let data: UpdateCategories = match receiver.recv() {
                     Ok((data, _)) => data,
                     Err(e) => {
-                        eprintln!("{}", e);
                         return;
                     }
                 };
@@ -177,8 +175,7 @@ fn main() {
                 loop {
                     let (data, category_type): (UpdateCategories, Category) = match receiver.recv() {
                         Ok((data, category_type)) => (data, category_type),
-                        Err(e) => {
-                            eprintln!("{}", e);
+                        Err(_) => {
                             return;
                         }
                     };
@@ -196,8 +193,6 @@ fn main() {
             }));
         }
 
-        println!("[Buffer Thread]: Setup complete.");
-
         loop {
             let categories: UpdateCategories = match rx.recv() {
                 Ok(option) => match option {
@@ -205,9 +200,9 @@ fn main() {
                     // We write None to channel on shutdown.
                     // Better way would be to close Sender, but I'm having trouble with that...
                     None => {
-                        println!("[Buffer Thread]: received shutdown request.");
+                        dark_blue!("[Buffer Thread]: received shutdown request.\n");
                         drop(rx);
-                        println!("[Buffer Thread]: waiting on worker threads to complete...");
+                        dark_blue!("[Buffer Thread]: waiting on worker threads to complete...\n");
                         for tx in workers.channels {
                             drop(tx);
                         }
@@ -217,13 +212,12 @@ fn main() {
                         return;
                     }
                 },
-                Err(e) => {
-                    eprintln!("{}", e);
+                Err(_) => {
                     return;
                 }
             };
 
-            println!("[BUFFER THREAD]: Initiating database writes.");
+            dark_blue!("[BUFFER THREAD]: Initiating database writes.\n");
             BufferCollection::launch_batch_db_updates(&categories, &mut workers);
 
         }
@@ -272,7 +266,7 @@ fn main() {
         parser::service_request(exit, &mut exchange, &mut users, &mut buffers, &mut client);
     } else {
         // User interface version
-        println!("
+        dark_yellow!("
          _       __     __                             __           ____             __ _  __
          | |     / /__  / /________  ____ ___  ___     / /_____     / __ \\__  _______/ /| |/ /
          | | /| / / _ \\/ / ___/ __ \\/ __ `__ \\/ _ \\   / __/ __ \\   / /_/ / / / / ___/ __/   /
@@ -282,7 +276,7 @@ fn main() {
 
         print_instructions();
         loop {
-            println!("\n---What would you like to do?---\n");
+            dark_yellow!("\n---What would you like to do?---\n");
 
             let mut input = String::new();
 
