@@ -1,6 +1,7 @@
 #[macro_use] extern crate random_number;
 extern crate chrono;
 extern crate ctrlc;
+extern crate redis;
 #[macro_use] extern crate colour;
 
 pub mod exchange;
