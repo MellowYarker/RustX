@@ -483,8 +483,9 @@ impl Exchange {
                 }
             }
 
-            // buffers.update_buffer_states(&self, &mut test_client);
-            if buffers.update_buffer_states(&self, conn) {
+            buffers.update_buffer_states();
+            // If order buffer was drained, we can reset our cached values modified field.
+            if buffers.transmit_buffer_data(&self) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in self.statistics.iter_mut() {

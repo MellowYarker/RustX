@@ -854,7 +854,7 @@ UPDATE SET total_orders=$1;";
  * This table always stays small, so the cost of 1 connection per
  * query is negligible, especially when using a prepared statement.
  **/
-pub fn update_buffered_markets(markets: &Vec<&SecStat>, conn: &mut Client) {
+pub fn update_buffered_markets(markets: &Vec<SecStat>, conn: &mut Client) {
     let mut transaction = conn.transaction().expect("Failed to initiate transaction!");
     let query_string = "\
 UPDATE Markets
