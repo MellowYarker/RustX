@@ -391,6 +391,7 @@ Please change the price of your order so that it cannot fill the following pendi
         Request::ExitReq => {
             println!("Initiating graceful shutdown...");
             buffers.flush_on_shutdown(exchange);
+            users.flush_user_cache(); // Send all cached users recent trades to redis.
             buffers.tx.as_ref().unwrap().send(None).unwrap();
         }
     }

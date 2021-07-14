@@ -6,6 +6,9 @@ use std::collections::HashMap;
 
 use postgres::Client;
 use crate::database;
+use chrono::{DateTime, FixedOffset};
+
+use redis::{Commands, RedisResult, RedisError};
 
 use crate::buffer::BufferCollection;
 
@@ -92,6 +95,7 @@ pub struct UserAccount {
     pub password: String,
     pub id: Option<i32>,
     pub pending_orders: AccountPendingOrders,
+    pub recent_trades: Vec<Trade>, // Trades that occured since the user was brought into cache
     pub modified: bool  // bool representing whether account has been modified since last batch write to DB
 }
 
@@ -102,6 +106,7 @@ impl UserAccount {
             password: password.clone(),
             id: None, // We set this later
             pending_orders: AccountPendingOrders::new(),
+            recent_trades: Vec::new(),
             modified: false,
         }
     }
@@ -113,6 +118,7 @@ impl UserAccount {
              password: password.to_string().clone(),
             id: Some(id),
             pending_orders: AccountPendingOrders::new(),
+            recent_trades: Vec::new(),
             modified: false,
         }
     }
@@ -227,9 +233,6 @@ You called validate_order on an account with in-complete pending order data.");
 
         println!("\nAccount information for user: {}", self.username);
 
-        let mut executed_trades: Vec<Trade> = Vec::new();
-        database::read_account_executed_trades(self, &mut executed_trades, conn);
-
         if !self.pending_orders.pending.is_empty() {
             println!("\n\tOrders Awaiting Execution");
             for (_, market) in self.pending_orders.pending.iter() {
@@ -240,6 +243,61 @@ You called validate_order on an account with in-complete pending order data.");
         } else {
             println!("\n\tNo Orders awaiting Execution");
         }
+
+        // TODO: Make a separate method/function that populates executed_trades, this is too many
+        // lines for this function IMO.
+        let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
+        let mut con = client.get_connection().expect("Failed to connect to redis");
+
+        let mut executed_trades: Vec<Trade> = Vec::new();
+
+        let filler_list = format!["filler:{}", self.id.unwrap()];
+        let filled_list = format!["filled:{}", self.id.unwrap()];
+        let lists = vec![filler_list, filled_list];
+        for list in lists {
+            let response: Result<Vec<String>, RedisError> = con.lrange(list, 0, -1);
+            match response {
+                Ok(trades) => {
+                    for trade in trades {
+                        let mut components = trade.split_whitespace();
+                        let symbol: &str          = components.next().unwrap();
+                        let action: &str          = components.next().unwrap();
+                        let price: f64              = components.next().unwrap().to_string().trim().parse::<f64>().unwrap(); // TODO: convert to f64
+                        let filled_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+                        let filled_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+                        let filler_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+                        let filler_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+                        let exchanged: i32          = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+
+                        let mut naive_time = components.next().unwrap().to_string().replace("_", "T");
+                        naive_time.push_str("+00:00");
+
+                        let execution_time:
+                            DateTime<FixedOffset>   = DateTime::parse_from_rfc3339(&naive_time.as_str()).unwrap(); // TODO: remove _, convert to datetime
+
+                        executed_trades.push(Trade::direct(symbol,
+                                                           action,
+                                                           price,
+                                                           filled_oid,
+                                                           filled_uid,
+                                                           filler_oid,
+                                                           filler_uid,
+                                                           exchanged,
+                                                           execution_time)
+                                             );
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+
+        }
+        // Get any trades that have occured since the user was cached.
+        if self.recent_trades.len() > 0 {
+            executed_trades.append(&mut (self.recent_trades.clone()));
+        }
+
         if executed_trades.len() > 0 {
             println!("\n\tExecuted Trades");
             for order in executed_trades.iter() {
@@ -249,6 +307,47 @@ You called validate_order on an account with in-complete pending order data.");
             println!("\n\tNo Executed Trades to show");
         }
         println!("\n");
+    }
+
+
+    /* Flush the user's recent trades to Redis.
+     * We call this when users are evicted from cache,
+     * including on program shutdown.
+     *
+     * TODO: Make 2 iterators, one for filled, one for filler,
+     *       then batch insert all trades into each list, rather
+     *       than do 1 request per trade.
+     *
+     * TODO: Pass a redis connection rather than reopening it each time.
+     **/
+    fn flush_trades_to_redis(self) {
+        let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
+        let mut con = client.get_connection().expect("Failed to connect to redis");
+
+        // Iterate over the trades, separate into filled and filler, then push to redis.
+        for trade in self.recent_trades.into_iter() {
+            let mut list = String::from("fill"); // Name of list we will add to
+
+            // Was filler
+            if trade.filler_uid == self.id.unwrap() {
+                list.push_str(&format!["er:{}", self.id.unwrap()]);
+            } else {
+                // Was filled
+                list.push_str(&format!["ed:{}", self.id.unwrap()]);
+            }
+
+            let mut time: String = format!["{}", trade.execution_time];
+            let mut components = time.split_whitespace();
+            let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
+            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
+            let response: Result<i32, RedisError> = con.lpush(list, args);
+            match response {
+                Ok(msg) => (),
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+        }
     }
 }
 
@@ -376,7 +475,9 @@ impl Users {
      *          - likelihood of cancelling an order soon
      *
      *  It remains to be seen if a basic cache eviction policy is good enough.
-     * */
+     *
+     * On cache eviction, write all recent_trades of the evicted user to Redis!
+     **/
     fn evict_user(&mut self) -> bool {
         // POLICY: Delete first candidate
         //     Itereate over all the entries, once we find one that's not modified, stop
@@ -394,11 +495,22 @@ impl Users {
         // If we found a user we can evict
         if let Some(key) = key_to_evict {
             let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
-            self.users.remove(&username);
+            let evicted = self.users.remove(&username).unwrap();
+
+            evicted.flush_trades_to_redis();
             return true;
         }
         // Failed to evict a user.
         return false;
+    }
+
+    /* On shutdown, we flush all recent_trades to Redis.
+     * TODO: Pass a redis connection to this method.
+     **/
+    pub fn flush_user_cache(&mut self) {
+        for user in self.users.values().cloned() {
+            user.flush_trades_to_redis();
+        }
     }
 
     /* Checks the user cache*/
@@ -578,8 +690,8 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
         let account_market = account.pending_orders.get_mut_market(&trades[0].symbol.as_str());
 
-        // TODO: If we want accurate executed_trades, we will need to store trades in user
-        // accounts (will be inaccurate between database updates).
+        // Iterate over the trades, storing them + modifying orders in the users
+        // respective accounts and the buffers.
         for trade in trades.iter() {
             let mut id = trade.filled_oid;
             let mut update_trade = trade.clone();
@@ -592,6 +704,15 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                     update_trade.action = SELL.to_string();
                 } else {
                     update_trade.action = BUY.to_string();
+                }
+
+                // Since this account is the filler, we know every trade belongs to them
+                account.recent_trades.push(update_trade);
+            } else {
+                // If this user placed the order that was filled,
+                // add the trade to their account.
+                if update_trade.filled_uid == account.id.unwrap() {
+                    account.recent_trades.push(update_trade);
                 }
             }
 
