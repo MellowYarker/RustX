@@ -247,7 +247,7 @@ You called validate_order on an account with in-complete pending order data.");
         // TODO: Make a separate method/function that populates executed_trades, this is too many
         // lines for this function IMO.
         let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
-        let mut con = client.get_connection().expect("Failed to connect to redis");
+        let mut redis_conn = client.get_connection().expect("Failed to connect to redis");
 
         let mut executed_trades: Vec<Trade> = Vec::new();
 
@@ -255,7 +255,7 @@ You called validate_order on an account with in-complete pending order data.");
         let filled_list = format!["filled:{}", self.id.unwrap()];
         let lists = vec![filler_list, filled_list];
         for list in lists {
-            let response: Result<Vec<String>, RedisError> = con.lrange(list, 0, -1);
+            let response: Result<Vec<String>, RedisError> = redis_conn.lrange(list, 0, -1);
             match response {
                 Ok(trades) => {
                     for trade in trades {
@@ -317,36 +317,47 @@ You called validate_order on an account with in-complete pending order data.");
      * TODO: Make 2 iterators, one for filled, one for filler,
      *       then batch insert all trades into each list, rather
      *       than do 1 request per trade.
-     *
-     * TODO: Pass a redis connection rather than reopening it each time.
      **/
-    fn flush_trades_to_redis(self) {
-        let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
-        let mut con = client.get_connection().expect("Failed to connect to redis");
+    fn flush_trades_to_redis(self, redis_conn: &mut redis::Connection) {
 
-        // Iterate over the trades, separate into filled and filler, then push to redis.
-        for trade in self.recent_trades.into_iter() {
-            let mut list = String::from("fill"); // Name of list we will add to
+        let filler_trades = self.recent_trades.iter().cloned().filter(|trade| trade.filler_uid == self.id.unwrap());
+        let filled_trades = self.recent_trades.iter().cloned().filter(|trade| trade.filled_uid == self.id.unwrap());
 
-            // Was filler
-            if trade.filler_uid == self.id.unwrap() {
-                list.push_str(&format!["er:{}", self.id.unwrap()]);
-            } else {
-                // Was filled
-                list.push_str(&format!["ed:{}", self.id.unwrap()]);
-            }
+        // TODO: If we can figure out multiple item inserts, use these.
+        let mut filler_args: Vec<String> = Vec::new();
+        let mut filled_args: Vec<String> = Vec::new();
 
+        for trade in filler_trades {
             let mut time: String = format!["{}", trade.execution_time];
             let mut components = time.split_whitespace();
             let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
+
             let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
-            let response: Result<i32, RedisError> = con.lpush(list, args);
-            match response {
+
+            let filler_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filler:{}", self.id.unwrap()], args);
+            match filler_response {
                 Ok(msg) => (),
                 Err(e) => {
                     eprintln!("{}", e);
                 }
             }
+            // filler_args.push(format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time]);
+        }
+
+        for trade in filled_trades {
+            let mut time: String = format!["{}", trade.execution_time];
+            let mut components = time.split_whitespace();
+            let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
+            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
+
+            let filled_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filled:{}", self.id.unwrap()], args);
+            match filled_response {
+                Ok(msg) => (),
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+            // filled_args.push(format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time]);
         }
     }
 }
@@ -365,24 +376,29 @@ You called validate_order on an account with in-complete pending order data.");
 //          and the users don't know their ID until we have a proper frontend that can memorize
 //          that data, we'll need to change our data structures.
 // ------------------------------------------------------------------------------------------------------
-#[derive(Debug)]
 pub struct Users {
     users: HashMap<String, UserAccount>,
     // TODO: This should be an LRU cache eventually
     id_map: HashMap<i32, String>,   // maps user_id to username
-    total: i32
+    pub redis_conn: redis::Connection,
+    total: i32,
 }
 
 impl Users {
 
     pub fn new() -> Self {
         // TODO: How do we want to decide what the max # users is?
-        let max_users = 1000;
+        let max_users = 50000;
         let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
         let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
+
+        let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
+        let mut conn = client.get_connection().expect("Failed to connect to redis");
+
         Users {
             users: map,
             id_map: id_map,
+            redis_conn: conn,
             total: 0
         }
     }
@@ -497,7 +513,7 @@ impl Users {
             let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
             let evicted = self.users.remove(&username).unwrap();
 
-            evicted.flush_trades_to_redis();
+            evicted.flush_trades_to_redis(&mut self.redis_conn);
             return true;
         }
         // Failed to evict a user.
@@ -509,7 +525,7 @@ impl Users {
      **/
     pub fn flush_user_cache(&mut self) {
         for user in self.users.values().cloned() {
-            user.flush_trades_to_redis();
+            user.flush_trades_to_redis(&mut self.redis_conn);
         }
     }
 
