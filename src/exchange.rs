@@ -475,8 +475,7 @@ impl Exchange {
                     self.fetch_account_pending_orders(&mut account);
                 }
 
-                let (validated, _) = account.validate_order(&order);
-                if validated {
+                if let None = account.validate_order(&order) {
                     if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
                         eprintln!("{}", e);
                     }

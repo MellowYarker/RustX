@@ -28,13 +28,13 @@ use std::time::Instant;
 
 // Helps us determine what each thread will work on.
 pub enum Category {
-    INSERT_NEW,
-    UPDATE_KNOWN,
-    INSERT_PENDING,
-    DELETE_PENDING,
-    UPDATE_TOTAL,
-    UPDATE_MARKET_STATS,
-    INSERT_NEW_TRADES
+    InsertNew,
+    UpdateKnown,
+    InsertPending,
+    DeletePending,
+    UpdateTotal,
+    UpdateMarketStats,
+    InsertNewTrades
 }
 
 // Helps manage the workload.
@@ -161,13 +161,13 @@ fn main() {
 
                     // Perform the database write here depending on the type of category.
                     match category_type {
-                        Category::INSERT_NEW            => BufferCollection::launch_insert_orders(&data.insert_orders, &mut conn),
-                        Category::UPDATE_KNOWN          => BufferCollection::launch_update_orders(&data.update_orders, &mut conn),
-                        Category::INSERT_PENDING        => BufferCollection::launch_insert_pending_orders(&data.insert_pending, &mut conn),
-                        Category::DELETE_PENDING        => BufferCollection::launch_delete_pending_orders(&data.delete_pending, &mut conn),
-                        Category::UPDATE_TOTAL          => BufferCollection::launch_exchange_stats_update(data.total_orders, &mut conn),
-                        Category::UPDATE_MARKET_STATS   => BufferCollection::launch_update_market(&data.update_markets, &mut conn),
-                        Category::INSERT_NEW_TRADES     => BufferCollection::launch_insert_trades(&data.insert_trades, &mut conn)
+                        Category::InsertNew            => BufferCollection::launch_insert_orders(&data.insert_orders, &mut conn),
+                        Category::UpdateKnown          => BufferCollection::launch_update_orders(&data.update_orders, &mut conn),
+                        Category::InsertPending        => BufferCollection::launch_insert_pending_orders(&data.insert_pending, &mut conn),
+                        Category::DeletePending        => BufferCollection::launch_delete_pending_orders(&data.delete_pending, &mut conn),
+                        Category::UpdateTotal          => BufferCollection::launch_exchange_stats_update(data.total_orders, &mut conn),
+                        Category::UpdateMarketStats    => BufferCollection::launch_update_market(&data.update_markets, &mut conn),
+                        Category::InsertNewTrades      => BufferCollection::launch_insert_trades(&data.insert_trades, &mut conn)
                     }
                     // Return the successful response message
                     response_tx.send(true).unwrap();

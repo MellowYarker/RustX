@@ -8,7 +8,7 @@ use postgres::Client;
 use crate::database;
 use chrono::{DateTime, FixedOffset};
 
-use redis::{Commands, RedisResult, RedisError};
+use redis::{Commands, RedisError};
 
 use crate::buffer::BufferCollection;
 
@@ -130,8 +130,8 @@ impl UserAccount {
     }
 
     /*
-     * Returns (true, None) if this order *CANNOT* fill any pending orders placed by
-     * this user. Otherwise, returns (false, Some(Order)) where Order is the pending order
+     * Returns None if this order *CANNOT* fill any pending orders placed by
+     * this user. Otherwise, returns Some(Order) where Order is the pending order
      * that would be filled.
      *
      * Consider the following scenario:
@@ -151,7 +151,7 @@ impl UserAccount {
      * bugs.
      *
      **/
-    pub fn validate_order(&self, order: &Order) -> (bool, Option<Order>) {
+    pub fn validate_order(&self, order: &Order) -> Option<Order> {
         if !self.pending_orders.is_complete {
             panic!("\
 Well, you've done it again.
@@ -167,7 +167,7 @@ You called validate_order on an account with in-complete pending order data.");
                         let result = candidates.min_by(|x, y| x.price.partial_cmp(&y.price).expect("Tried to compare NaN!"));
                         if let Some(lowest_offer) = result {
                             if lowest_offer.price <= order.price {
-                                return (false, Some(lowest_offer.clone()));
+                                return Some(lowest_offer.clone());
                             }
                         }
                     },
@@ -175,7 +175,7 @@ You called validate_order on an account with in-complete pending order data.");
                         let result = candidates.max_by(|x, y| x.price.partial_cmp(&y.price).expect("Tried to compare Nan!"));
                         if let Some(highest_bid) = result {
                             if order.price <= highest_bid.price {
-                                return (false, Some(highest_bid.clone()));
+                                return Some(highest_bid.clone());
                             }
                         }
                     },
@@ -184,7 +184,7 @@ You called validate_order on an account with in-complete pending order data.");
             },
             None => ()
         }
-        return (true, None);
+        return None;
     }
 
     /* If the order is in the cache, we return its action (buy/sell), else None. */
@@ -226,7 +226,7 @@ You called validate_order on an account with in-complete pending order data.");
     /* Prints the account information of this user
      * if their account view is up to date.
      **/
-    pub fn print_user(&self, conn: &mut Client) {
+    pub fn print_user(&self) {
         if !self.pending_orders.is_complete {
             panic!("Tried to print_user who doesn't have complete pending order info!");
         }
@@ -324,38 +324,32 @@ You called validate_order on an account with in-complete pending order data.");
         let filled_trades = self.recent_trades.iter().cloned().filter(|trade| trade.filled_uid == self.id.unwrap());
 
         // TODO: If we can figure out multiple item inserts, use these.
-        let mut filler_args: Vec<String> = Vec::new();
-        let mut filled_args: Vec<String> = Vec::new();
+        // let mut filler_args: Vec<String> = Vec::new();
+        // let mut filled_args: Vec<String> = Vec::new();
 
         for trade in filler_trades {
-            let mut time: String = format!["{}", trade.execution_time];
+            let time: String = format!["{}", trade.execution_time];
             let mut components = time.split_whitespace();
             let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
 
             let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
 
             let filler_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filler:{}", self.id.unwrap()], args);
-            match filler_response {
-                Ok(msg) => (),
-                Err(e) => {
-                    eprintln!("{}", e);
-                }
+            if let Err(e) =  filler_response {
+                eprintln!("{}", e);
             }
             // filler_args.push(format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time]);
         }
 
         for trade in filled_trades {
-            let mut time: String = format!["{}", trade.execution_time];
+            let time: String = format!["{}", trade.execution_time];
             let mut components = time.split_whitespace();
             let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
             let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
 
             let filled_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filled:{}", self.id.unwrap()], args);
-            match filled_response {
-                Ok(msg) => (),
-                Err(e) => {
-                    eprintln!("{}", e);
-                }
+            if let Err(e) = filled_response {
+                eprintln!("{}", e);
             }
             // filled_args.push(format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time]);
         }
@@ -388,17 +382,17 @@ impl Users {
 
     pub fn new() -> Self {
         // TODO: How do we want to decide what the max # users is?
-        let max_users = 50000;
-        let map: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
+        let max_users = 1000;
+        let users: HashMap<String, UserAccount> = HashMap::with_capacity(max_users);
         let id_map: HashMap<i32, String> = HashMap::with_capacity(max_users);
 
         let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
-        let mut conn = client.get_connection().expect("Failed to connect to redis");
+        let redis_conn = client.get_connection().expect("Failed to connect to redis");
 
         Users {
-            users: map,
-            id_map: id_map,
-            redis_conn: conn,
+            users,
+            id_map,
+            redis_conn,
             total: 0
         }
     }
@@ -520,9 +514,7 @@ impl Users {
         return false;
     }
 
-    /* On shutdown, we flush all recent_trades to Redis.
-     * TODO: Pass a redis connection to this method.
-     **/
+    /* On shutdown, we flush all recent_trades to Redis. */
     pub fn flush_user_cache(&mut self) {
         for user in self.users.values().cloned() {
             user.flush_trades_to_redis(&mut self.redis_conn);
@@ -554,8 +546,12 @@ impl Users {
     pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
+        let mut redis_miss = true;
         match self.auth_check_cache(username, password) {
-            Ok(()) => cache_miss = false,
+            Ok(()) => {
+                cache_miss = false;
+                redis_miss = false;
+            }
             Err(e) => {
                 if let AuthError::BadPassword(_) = e {
                     return Err(e);
@@ -563,11 +559,51 @@ impl Users {
             }
         }
 
-        // On cache miss, check the database.
+        // On cache miss, check redis.
         if cache_miss {
+            let response: Result<HashMap<String, String>, RedisError> = self.redis_conn.hgetall(format!["user:{}", username]);
+            match response {
+                Ok(map) => {
+                    let id: i32;
+                    let mut password = String::new();
+
+                    match map.get("id") {
+                        Some(val) => {
+                            id = val.trim().parse::<i32>().unwrap();
+                            password.push_str(map.get("password").unwrap());
+                            let account = UserAccount::direct(id, username, &password);
+
+                            // Cache the user we found
+                            if !self.cache_user(account.clone()) {
+                                buffers.force_flush(exchange);
+                                self.reset_users_modified();
+
+                                // Set all market stats modified to false
+                                for (_key, entry) in exchange.statistics.iter_mut() {
+                                    entry.modified = false;
+                                }
+                                self.cache_user(account);
+                            }
+
+                            redis_miss = false;
+                        },
+                        None => ()
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+        }
+        // On redis cache miss, check the database.
+        if redis_miss {
             match database::read_auth_user(username, password, conn) {
                 // We got an account, move it into the cache.
                 Ok(account) => {
+
+                    // Copy of the id
+                    let id = account.id.unwrap();
+
                     // If we fail to cache the user, flush the buffers so we can evict users.
                     if !self.cache_user(account.clone()) {
                         buffers.force_flush(exchange);
@@ -579,6 +615,12 @@ impl Users {
                         }
                         self.cache_user(account);
                     }
+                    // Finally, cache the user in redis
+                    let id = id.to_string();
+                    let v = vec![   ("id", id.as_str()),
+                                    ("username", username),
+                                    ("password", password)];
+                    let _: () = self.redis_conn.hset_multiple(format!["user:{}", username], &v[..]).unwrap();
                 },
                 Err(e) => return Err(e)
             }
