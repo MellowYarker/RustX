@@ -262,18 +262,18 @@ You called validate_order on an account with in-complete pending order data.");
                         let mut components = trade.split_whitespace();
                         let symbol: &str          = components.next().unwrap();
                         let action: &str          = components.next().unwrap();
-                        let price: f64              = components.next().unwrap().to_string().trim().parse::<f64>().unwrap(); // TODO: convert to f64
-                        let filled_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
-                        let filled_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
-                        let filler_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
-                        let filler_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
-                        let exchanged: i32          = components.next().unwrap().to_string().trim().parse::<i32>().unwrap(); // TODO: convert to i32
+                        let price: f64              = components.next().unwrap().to_string().trim().parse::<f64>().unwrap();
+                        let filled_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filled_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filler_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filler_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let exchanged: i32          = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
 
                         let mut naive_time = components.next().unwrap().to_string().replace("_", "T");
                         naive_time.push_str("+00:00");
 
                         let execution_time:
-                            DateTime<FixedOffset>   = DateTime::parse_from_rfc3339(&naive_time.as_str()).unwrap(); // TODO: remove _, convert to datetime
+                            DateTime<FixedOffset>   = DateTime::parse_from_rfc3339(&naive_time.as_str()).unwrap();
 
                         executed_trades.push(Trade::direct(symbol,
                                                            action,
@@ -313,6 +313,8 @@ You called validate_order on an account with in-complete pending order data.");
     /* Flush the user's recent trades to Redis.
      * We call this when users are evicted from cache,
      * including on program shutdown.
+     *
+     * TODO: Replace _ with T, append +00:00 to date, then remove these from deconstruction later.
      *
      * TODO: Make 2 iterators, one for filled, one for filler,
      *       then batch insert all trades into each list, rather
@@ -452,20 +454,31 @@ impl Users {
 
     /* Stores a user in the programs cache.
      * If a user is successfully added to the cache, we return true, otherwise, return false.
-     * */
-    fn cache_user(&mut self, account: UserAccount) -> bool {
+     **/
+    fn cache_user(&mut self, account: UserAccount, buffers: &mut BufferCollection, exchange: &mut Exchange) {
         // Evict a user if we don't have space.
         let capacity: f64 = self.users.capacity() as f64;
         let count: f64 = self.users.len() as f64;
         if capacity * 0.9 <= count {
+            // Flush the buffers if we can't evict anyone
+            // if !self.evict_user(false) {
+            // self.evict_user();
             if !self.evict_user() {
-                return false;
+                buffers.force_flush(exchange);
+                self.reset_users_modified();
+
+                // Set all market stats modified to false
+                for (_key, entry) in exchange.statistics.iter_mut() {
+                    entry.modified = false;
+                }
+
+                self.evict_user();
+                // self.evict_user(true);
             }
         }
 
         self.id_map.insert(account.id.unwrap(), account.username.clone());
         self.users.insert(account.username.clone(), account);
-        return true;
     }
 
     /* Evict a user from the cache.
@@ -488,6 +501,7 @@ impl Users {
      *
      * On cache eviction, write all recent_trades of the evicted user to Redis!
      **/
+    // fn evict_user(&mut self, force_evict: bool) -> bool {
     fn evict_user(&mut self) -> bool {
         // POLICY: Delete first candidate
         //     Itereate over all the entries, once we find one that's not modified, stop
@@ -497,6 +511,7 @@ impl Users {
 
         for (_name, entry) in self.users.iter() {
             if !entry.modified {
+            // if (!entry.pending_orders.is_complete) || force_evict {
                 key_to_evict = entry.id;
                 break;
             }
@@ -587,19 +602,8 @@ impl Users {
             match self.check_redis_user_cache(username.as_str()) {
                 Ok(acc) => {
                     if let Some(account) = acc {
-                        // TODO: Make a helper func for this "request_cache_user".
                         // Cache the user we found
-                        if !self.cache_user(account.clone()) {
-                            buffers.force_flush(exchange);
-                            self.reset_users_modified();
-
-                            // Set all market stats modified to false
-                            for (_key, entry) in exchange.statistics.iter_mut() {
-                                entry.modified = false;
-                            }
-                            self.cache_user(account);
-                        }
-
+                        self.cache_user(account.clone(), buffers, exchange);
                         redis_miss = false;
                     }
                 },
@@ -619,16 +623,8 @@ impl Users {
                     let id = account.id.unwrap();
 
                     // If we fail to cache the user, flush the buffers so we can evict users.
-                    if !self.cache_user(account.clone()) {
-                        buffers.force_flush(exchange);
-                        self.reset_users_modified();
+                    self.cache_user(account.clone(), buffers, exchange);
 
-                        // Set all market stats modified to false
-                        for (_key, entry) in exchange.statistics.iter_mut() {
-                            entry.modified = false;
-                        }
-                        self.cache_user(account);
-                    }
                     // Finally, cache the user in redis
                     let id = id.to_string();
                     let v = vec![   ("id", id.as_str()),
@@ -719,21 +715,23 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                     account = redis_response.unwrap();
                 }
 
-                if !self.cache_user(account.clone()) {
-                    // If we fail to evict a user, flush the buffers and try again.
-                    buffers.force_flush(exchange);
-                    self.reset_users_modified();
-
-                    // Set all market stats modified to false
-                    for (_key, entry) in exchange.statistics.iter_mut() {
-                        entry.modified = false;
-                    }
-
-                    self.cache_user(account);
-                }
+                self.cache_user(account.clone(), buffers, exchange);
             }
         }
         return self.users.get_mut(username).unwrap();
+    }
+
+    /* Returns a username if one is found. */
+    fn redis_get_id_map(&mut self, id: i32) -> Option<String> {
+        let response: Result<Option<String>, RedisError> = self.redis_conn.hget(format!["id:{}", id], "username");
+
+        if let Ok(potential_name) = response {
+            if let Some(name) = potential_name {
+                return Some(String::from(name));
+            }
+        }
+
+        return None;
     }
 
     /* Update this users pending_orders, and the Orders table.
@@ -750,14 +748,22 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         let username: String = match self.id_map.get(&id) {
             Some(name) => name.clone(),
             None => {
-                // TODO: Check redis for the user id -> username map
-                // Search the database for the user with this id.
-                let result = database::read_user_by_id(id, conn);
-                if let Err(_) = result {
-                    panic!("Query to get user by id failed!");
-                };
+                // Check redis for the user id -> username map
+                let response = self.redis_get_id_map(id);
+                // wasn't in redis, check the database.
+                if let None = response {
+                    let result = database::read_user_by_id(id, conn);
+                    if let Err(_) = result {
+                        panic!("Query to get user by id failed!");
+                    };
 
-                result.unwrap()
+                    // Store this in redis now.
+                    let _: () = self.redis_conn.hset(format!["id:{}", id], "username", result.as_ref().unwrap()).unwrap();
+                    result.unwrap()
+                } else {
+                    // name found in redis
+                    response.unwrap()
+                }
             }
         };
 
