@@ -1,6 +1,5 @@
 use crate::exchange::requests::{Order, OrderStatus};
 use crate::exchange::filled::Trade;
-use crate::Exchange;
 
 use std::collections::HashMap;
 
@@ -455,25 +454,14 @@ impl Users {
     /* Stores a user in the programs cache.
      * If a user is successfully added to the cache, we return true, otherwise, return false.
      **/
-    fn cache_user(&mut self, account: UserAccount, buffers: &mut BufferCollection, exchange: &mut Exchange) {
+    fn cache_user(&mut self, account: UserAccount) {
         // Evict a user if we don't have space.
         let capacity: f64 = self.users.capacity() as f64;
         let count: f64 = self.users.len() as f64;
         if capacity * 0.9 <= count {
-            // Flush the buffers if we can't evict anyone
-            // if !self.evict_user(false) {
-            // self.evict_user();
-            if !self.evict_user() {
-                buffers.force_flush(exchange);
-                self.reset_users_modified();
-
-                // Set all market stats modified to false
-                for (_key, entry) in exchange.statistics.iter_mut() {
-                    entry.modified = false;
-                }
-
-                self.evict_user();
-                // self.evict_user(true);
+            // If no one good eviction candidates, force evictions.
+            if !self.evict_user(false) {
+                self.evict_user(true);
             }
         }
 
@@ -501,8 +489,7 @@ impl Users {
      *
      * On cache eviction, write all recent_trades of the evicted user to Redis!
      **/
-    // fn evict_user(&mut self, force_evict: bool) -> bool {
-    fn evict_user(&mut self) -> bool {
+    fn evict_user(&mut self, force_evict: bool) -> bool {
         // POLICY: Delete first candidate
         //     Itereate over all the entries, once we find one that's not modified, stop
         //     iterating, make note of the key, then delete the entry.
@@ -510,8 +497,7 @@ impl Users {
         let mut key_to_evict: Option<i32> = None;
 
         for (_name, entry) in self.users.iter() {
-            if !entry.modified {
-            // if (!entry.pending_orders.is_complete) || force_evict {
+            if (!entry.pending_orders.is_complete) || force_evict {
                 key_to_evict = entry.id;
                 break;
             }
@@ -581,7 +567,7 @@ impl Users {
      *       for the frontend to hold on to?
      *
      */
-    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
+    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
         let mut redis_miss = true;
@@ -603,7 +589,7 @@ impl Users {
                 Ok(acc) => {
                     if let Some(account) = acc {
                         // Cache the user we found
-                        self.cache_user(account.clone(), buffers, exchange);
+                        self.cache_user(account.clone());
                         redis_miss = false;
                     }
                 },
@@ -623,7 +609,7 @@ impl Users {
                     let id = account.id.unwrap();
 
                     // If we fail to cache the user, flush the buffers so we can evict users.
-                    self.cache_user(account.clone(), buffers, exchange);
+                    self.cache_user(account.clone());
 
                     // Finally, cache the user in redis
                     let id = id.to_string();
@@ -692,7 +678,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
      * If the account is in the database, we construct a user, cache them, get the pending orders,
      * then return the UserAccount to the calling function.
      */
-    fn _get_mut(&mut self, username: &String, exchange: &mut Exchange, buffers: &mut BufferCollection, conn: &mut Client) -> &mut UserAccount {
+    fn _get_mut(&mut self, username: &String, conn: &mut Client) -> &mut UserAccount {
         match self.users.get_mut(username) {
             Some(_) => (),
             None => {
@@ -715,7 +701,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                     account = redis_response.unwrap();
                 }
 
-                self.cache_user(account.clone(), buffers, exchange);
+                self.cache_user(account.clone());
             }
         }
         return self.users.get_mut(username).unwrap();
@@ -737,7 +723,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Update this users pending_orders, and the Orders table.
      * We have 2 cases to consider, as explained in update_account_orders().
      **/
-    fn update_single_user(&mut self, exchange: &mut Exchange, buffers: &mut BufferCollection, id: i32, modified_orders: &Vec<Order>, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
+    fn update_single_user(&mut self, buffers: &mut BufferCollection, id: i32, modified_orders: &Vec<Order>, trades: &Vec<Trade>, is_filler: bool, conn: &mut Client) {
         // TODO:
         //  At some point, we want to get the username by calling some helper access function.
         //  This new function will
@@ -768,7 +754,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         };
 
         // Gives a mutable reference to cache.
-        let account = self._get_mut(&username, exchange, buffers, conn);
+        let account = self._get_mut(&username, conn);
 
         // PER-6 set account modified to true because we're modifying their orders.
         account.modified = true;
@@ -854,7 +840,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
     /* Given a vector of Trades, update all the accounts
      * that had orders filled.
      */
-    pub fn update_account_orders(&mut self, exchange: &mut Exchange, modified_orders: &mut Vec<Order>, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
+    pub fn update_account_orders(&mut self, modified_orders: &mut Vec<Order>, trades: &mut Vec<Trade>, buffers: &mut BufferCollection, conn: &mut Client) {
 
         /* All orders in the vector were filled by 1 new order,
          * so we have to handle 2 cases.
@@ -874,10 +860,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         // Case 1
         // TODO: This is a good candidate for multithreading.
         for (user_id, new_trades) in update_map.iter() {
-            self.update_single_user(exchange, buffers, *user_id, modified_orders, new_trades, false, conn);
+            self.update_single_user(buffers, *user_id, modified_orders, new_trades, false, conn);
         }
         // Case 2: update account who placed order that filled others.
-        self.update_single_user(exchange, buffers, trades[0].filler_uid, modified_orders, trades, true, conn);
+        self.update_single_user(buffers, trades[0].filler_uid, modified_orders, trades, true, conn);
 
         // Add this trade to the trades database buffer.
         buffers.buffered_trades.add_trades_to_buffer(trades); // PER-5 update
