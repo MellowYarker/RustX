@@ -21,6 +21,8 @@ pub use crate::buffer::BufferCollection;
 
 use postgres::Client;
 
+use std::time::Instant;
+
 // Error types for price information.
 pub enum PriceError {
     NoMarket,
@@ -91,7 +93,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(self, &mut modified_orders, &mut trades, buffers, conn);
+            users.update_account_orders(&mut modified_orders, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -436,6 +438,8 @@ impl Exchange {
             users.new_account(UserAccount::from(name, &"password".to_string()), conn);
         }
 
+        let start = Instant::now();
+        println!("Starting sim timer!");
         // Simulation loop
         for _time_step in 0..sim.duration {
             // We want to randomly decide to buy or sell,
@@ -466,7 +470,7 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
+            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
 
@@ -475,8 +479,7 @@ impl Exchange {
                     self.fetch_account_pending_orders(&mut account);
                 }
 
-                let (validated, _) = account.validate_order(&order);
-                if validated {
+                if let None = account.validate_order(&order) {
                     if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
                         eprintln!("{}", e);
                     }
@@ -493,5 +496,6 @@ impl Exchange {
                 }
             }
         }
+        println!("SIMULATION TOOK: {} seconds!", start.elapsed().as_secs());
     }
 }

@@ -239,7 +239,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
             match &order.action[..] {
                 "BUY" | "SELL" => {
                     // Try to get the account
-                    match users.authenticate(&username, &password, exchange, buffers, conn) {
+                    match users.authenticate(&username, &password, conn) {
                         Ok(mut account) => {
                             // Set the order's user id now that we have an account
                             order.user_id = account.id;
@@ -251,18 +251,16 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                                 exchange.fetch_account_pending_orders(&mut account);
                             }
 
-                            let (validated, obstruction) = account.validate_order(&order);
-                            if validated {
+                            if let Some(obstruction) = account.validate_order(&order) {
+                                eprintln!("\
+The order could not be placed. You have a pending order in ${} that could potentially be filled by the order you just requested.
+Please change the price of your order so that it cannot fill the following pending order:\n\t{:?}", obstruction.symbol, obstruction);
+                            } else {
                                 if let Err(e) =  &exchange.submit_order_to_market(users, buffers, order.clone(), &username, true, conn) {
                                     eprintln!("{}", e);
                                 } else {
                                     &exchange.show_market(&order.symbol);
                                 }
-                            } else {
-                                let obstruction = obstruction.unwrap();
-                                eprintln!("\
-The order could not be placed. You have a pending order in ${} that could potentially be filled by the order you just requested.
-Please change the price of your order so that it cannot fill the following pending order:\n\t{:?}", obstruction.symbol, obstruction);
                             }
                         },
                         Err(e) => Users::print_auth_error(e)
@@ -273,7 +271,7 @@ Please change the price of your order so that it cannot fill the following pendi
             }
         },
         Request::CancelReq(order_to_cancel, password) => {
-            match users.authenticate(&(order_to_cancel.username), &password, exchange, buffers, conn) {
+            match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
                     match exchange.cancel_order(&order_to_cancel, users, buffers, conn) {
                         Ok(_) => println!("Order successfully cancelled."),
@@ -332,7 +330,7 @@ Please change the price of your order so that it cannot fill the following pendi
         Request::UpgradeDbReq(db_name, username, password) => {
             // First, lets authenticate to make sure we're the admin.
             if username.as_str() == "admin" {
-                match users.authenticate(&username, &password, exchange, buffers, conn) {
+                match users.authenticate(&username, &password, conn) {
                     Ok(_) => {
                         println!("Please enter the file path to the configuration:");
                         let mut file_path = String::new();
@@ -375,12 +373,12 @@ Please change the price of your order so that it cannot fill the following pendi
                    }
                 },
                 "show" => {
-                    match users.authenticate(&account.username, &account.password, exchange, buffers, conn) {
+                    match users.authenticate(&account.username, &account.password, conn) {
                         Ok(acc) => {
                             if !acc.pending_orders.is_complete {
                                 exchange.fetch_account_pending_orders(acc);
                             }
-                            &acc.print_user(conn);
+                            &acc.print_user();
                         },
                         Err(e) => Users::print_auth_error(e)
                     }
@@ -391,6 +389,7 @@ Please change the price of your order so that it cannot fill the following pendi
         Request::ExitReq => {
             println!("Initiating graceful shutdown...");
             buffers.flush_on_shutdown(exchange);
+            users.flush_user_cache(); // Send all cached users recent trades to redis.
             buffers.tx.as_ref().unwrap().send(None).unwrap();
         }
     }
