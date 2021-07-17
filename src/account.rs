@@ -521,6 +521,29 @@ impl Users {
         }
     }
 
+    /* Check the redis cache for the user, on success we return Some(user),
+     * on failure we return None.
+     **/
+    fn check_redis_user_cache(&mut self, username: &str) -> Result<Option<UserAccount>, RedisError> {
+        let response: Result<HashMap<String, String>, RedisError> = self.redis_conn.hgetall(format!["user:{}", username]);
+        match response {
+            Ok(map) => {
+                let id: i32;
+                let mut password = String::new();
+
+                if let Some(val) =  map.get("id") {
+                    id = val.trim().parse::<i32>().unwrap();
+                    password.push_str(map.get("password").unwrap());
+                    return Ok(Some(UserAccount::direct(id, username, &password)));
+                }
+                return Ok(None);
+            },
+            // Otherwise we got an err
+            Err(e) => return Err(e)
+        }
+    }
+
+
     /* Checks the user cache*/
     fn auth_check_cache<'a>(&self, username: &'a String, password: & String) -> Result<(), AuthError<'a>> {
         if let Some(account) = self.users.get(username) {
@@ -561,37 +584,28 @@ impl Users {
 
         // On cache miss, check redis.
         if cache_miss {
-            let response: Result<HashMap<String, String>, RedisError> = self.redis_conn.hgetall(format!["user:{}", username]);
-            match response {
-                Ok(map) => {
-                    let id: i32;
-                    let mut password = String::new();
+            match self.check_redis_user_cache(username.as_str()) {
+                Ok(acc) => {
+                    if let Some(account) = acc {
+                        // TODO: Make a helper func for this "request_cache_user".
+                        // Cache the user we found
+                        if !self.cache_user(account.clone()) {
+                            buffers.force_flush(exchange);
+                            self.reset_users_modified();
 
-                    match map.get("id") {
-                        Some(val) => {
-                            id = val.trim().parse::<i32>().unwrap();
-                            password.push_str(map.get("password").unwrap());
-                            let account = UserAccount::direct(id, username, &password);
-
-                            // Cache the user we found
-                            if !self.cache_user(account.clone()) {
-                                buffers.force_flush(exchange);
-                                self.reset_users_modified();
-
-                                // Set all market stats modified to false
-                                for (_key, entry) in exchange.statistics.iter_mut() {
-                                    entry.modified = false;
-                                }
-                                self.cache_user(account);
+                            // Set all market stats modified to false
+                            for (_key, entry) in exchange.statistics.iter_mut() {
+                                entry.modified = false;
                             }
+                            self.cache_user(account);
+                        }
 
-                            redis_miss = false;
-                        },
-                        None => ()
+                        redis_miss = false;
                     }
                 },
                 Err(e) => {
                     eprintln!("{}", e);
+                    panic!("Something went wrong with redis.");
                 }
             }
         }
@@ -686,10 +700,24 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         match self.users.get_mut(username) {
             Some(_) => (),
             None => {
-                let account = match database::read_account(username, conn) {
-                    Ok(acc) => acc,
-                    Err(_) => panic!("Something went wrong while trying to get a user from the database!")
+                // TODO: First check redis, then check DB if redis fails.
+                let account: UserAccount;
+                let redis_response = match self.check_redis_user_cache(username.as_str()) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        panic!("Something went wrong while trying to get a user from Redis!")
+                    }
                 };
+                // If we didn't find the user in Redis, check DB.
+                if let None = redis_response {
+                    account = match database::read_account(username, conn) {
+                        Ok(acc) => acc,
+                        Err(_) => panic!("Something went wrong while trying to get a user from the database!")
+                    };
+                } else {
+                    account = redis_response.unwrap();
+                }
 
                 if !self.cache_user(account.clone()) {
                     // If we fail to evict a user, flush the buffers and try again.
@@ -722,6 +750,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
         let username: String = match self.id_map.get(&id) {
             Some(name) => name.clone(),
             None => {
+                // TODO: Check redis for the user id -> username map
                 // Search the database for the user with this id.
                 let result = database::read_user_by_id(id, conn);
                 if let Err(_) = result {
