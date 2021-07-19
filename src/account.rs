@@ -846,8 +846,10 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
             // After processing the order, move it to executed trades.
             match account_market.get_mut(&id) {
-                 Some(order) => {
-                    if trade.exchanged == (order.quantity - order.filled) {
+                Some(order) => {
+                    // We don't want to modify the filler's order at all, as that is
+                    // done earlier (when we first submitted it to the market).
+                    if !is_filler && (trade.exchanged == (order.quantity - order.filled)) {
                         // Add/update this completed order in the database buffer.
                         order.status = OrderStatus::COMPLETE;
                         order.filled = order.quantity;
@@ -865,21 +867,24 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                         // Add/update this pre-existing pending order to the database buffer.
                         buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
                     }
-                 },
-                 // Order not found in users in-mem account, this is because
-                 // the user hasn't placed/cancelled an order recently.
-                 // This is fine, as we can read the order from the modified_orders vector.
-                 None => {
-                     for order in modified_orders.iter() {
-                         if order.order_id == id {
-                             if let OrderStatus::PENDING = order.status {
-                                 account_market.insert(id, order.clone());
-                             }
-                             buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true);
-                             break;
-                         }
-                     }
-                 }
+                },
+                // Order not found in users in-mem account, this is because
+                // the user hasn't placed/cancelled an order recently.
+                // This is fine, as we can read the order from the modified_orders vector.
+                None => {
+                    for order in modified_orders.iter() {
+                        if order.order_id == id {
+                            let market_diff = account.recent_markets.entry(order.symbol.clone()).or_insert(0);
+                            if let OrderStatus::PENDING = order.status {
+                                account_market.insert(id, order.clone());
+                            } else {
+                                *market_diff -= 1;
+                            }
+                            buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
