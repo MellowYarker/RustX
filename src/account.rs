@@ -95,6 +95,11 @@ pub struct UserAccount {
     pub id: Option<i32>,
     pub pending_orders: AccountPendingOrders,
     pub recent_trades: Vec<Trade>, // Trades that occured since the user was brought into cache
+
+    // recent_markets is: Market symbol followed by change in number of orders since user was cached.
+    // If 2 orders were filled, and one new order was placed and is still pending (same market), the overall diff
+    // is -1.
+    pub recent_markets: HashMap<String, i32>,
     pub modified: bool  // bool representing whether account has been modified since last batch write to DB
 }
 
@@ -106,6 +111,7 @@ impl UserAccount {
             id: None, // We set this later
             pending_orders: AccountPendingOrders::new(),
             recent_trades: Vec::new(),
+            recent_markets: HashMap::new(),
             modified: false,
         }
     }
@@ -118,6 +124,7 @@ impl UserAccount {
             id: Some(id),
             pending_orders: AccountPendingOrders::new(),
             recent_trades: Vec::new(),
+            recent_markets: HashMap::new(),
             modified: false,
         }
     }
@@ -308,6 +315,37 @@ You called validate_order on an account with in-complete pending order data.");
         println!("\n");
     }
 
+
+    /* Update the redis cache active_markets:user_id.
+     * If we decrement a market to 0, then we remove it from the sorted set.
+     **/
+    fn redis_update_active_markets(&self, redis_conn: &mut redis::Connection) {
+        for (market, diff) in self.recent_markets.iter() {
+
+            let mut delete_required = false;
+            let response: Result<String, RedisError> = redis_conn.zincr(format!["active_markets:{}", self.id.unwrap()], market, *diff);
+
+            match response {
+                Ok(count) => {
+                    let count = count.trim().parse::<i32>().unwrap();
+                    if count == 0 {
+                        // Remove the value from the set.
+                        delete_required = true;
+                    } else if count < 0 {
+                        eprintln!("There is a bug in active_markets:{}. There are {} pending orders in our redis cache.", self.id.unwrap(), count);
+                        panic!("This is a bug, the programmer needs to find the bad logic!");
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+
+            if delete_required {
+                let _: () = redis_conn.zrem(format!["active_markets:{}", self.id.unwrap()], market).unwrap();
+            }
+        }
+    }
 
     /* Flush the user's recent trades to Redis.
      * We call this when users are evicted from cache,
@@ -508,6 +546,8 @@ impl Users {
             let username = self.id_map.remove(&key).unwrap(); // returns the value (username)
             let evicted = self.users.remove(&username).unwrap();
 
+            // Write the cached data to redis
+            evicted.redis_update_active_markets(&mut self.redis_conn);
             evicted.flush_trades_to_redis(&mut self.redis_conn);
             return true;
         }
@@ -515,9 +555,10 @@ impl Users {
         return false;
     }
 
-    /* On shutdown, we flush all recent_trades to Redis. */
+    /* On shutdown, we flush all recent_trades and recent_markets to Redis. */
     pub fn flush_user_cache(&mut self) {
         for user in self.users.values().cloned() {
+            user.redis_update_active_markets(&mut self.redis_conn);
             user.flush_trades_to_redis(&mut self.redis_conn);
         }
     }
@@ -567,7 +608,7 @@ impl Users {
      *       for the frontend to hold on to?
      *
      */
-    pub fn authenticate<'a>(&mut self, username: &'a String, password: & String, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
+    pub fn authenticate<'a>(&mut self, username: &'a String, password: &String, conn: &mut Client) -> Result<&mut UserAccount, AuthError<'a>> {
         // First, we check our in-memory cache
         let mut cache_miss = true;
         let mut redis_miss = true;
@@ -588,9 +629,17 @@ impl Users {
             match self.check_redis_user_cache(username.as_str()) {
                 Ok(acc) => {
                     if let Some(account) = acc {
-                        // Cache the user we found
-                        self.cache_user(account.clone());
-                        redis_miss = false;
+                        // TODO: I don't like that we read the password into the program.
+                        // I would rather have it be checked in Redis like postgres does,
+                        // since they may do security better. But then again, I've heard
+                        // redis security isn't great.
+                        if &account.password == password {
+                            // Cache the user we found
+                            self.cache_user(account.clone());
+                            redis_miss = false;
+                        } else {
+                            return Err(AuthError::BadPassword(None));
+                        }
                     }
                 },
                 Err(e) => {
@@ -805,6 +854,9 @@ Be sure to call authenticate() before trying to get a reference to a user!")
                         buffers.buffered_orders.add_or_update_entry_in_order_buffer(&order, true); // PER-5 update
 
                         entries_to_remove.push(order.order_id);
+                        // Get the entry in the recent_markets map, we want to decrement it by 1.
+                        let market_diff = account.recent_markets.entry(order.symbol.clone()).or_insert(0);
+                        *market_diff -= 1;
                     } else if !is_filler {
                         // Don't update the filler's filled count,
                         // new orders are added to accounts in submit_order_to_market.
@@ -833,7 +885,7 @@ Be sure to call authenticate() before trying to get a reference to a user!")
 
         // Remove any completed orders from the accounts pending orders.
         for i in &entries_to_remove {
-            account_market.remove(&i);
+            account_market.remove(i);
         }
     }
 
