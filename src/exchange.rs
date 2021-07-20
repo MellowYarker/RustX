@@ -20,6 +20,9 @@ pub use crate::database;
 pub use crate::buffer::BufferCollection;
 
 use postgres::Client;
+use redis::{Commands, RedisError};
+
+use std::time::Instant;
 
 // Error types for price information.
 pub enum PriceError {
@@ -91,7 +94,7 @@ impl Exchange {
              * in the mean time?)
              */
             // Updates database too.
-            users.update_account_orders(self, &mut modified_orders, &mut trades, buffers, conn);
+            users.update_account_orders(&mut modified_orders, &mut trades, buffers, conn);
             self.has_trades.insert(order.symbol.clone(), true);
         };
 
@@ -122,27 +125,44 @@ impl Exchange {
         }
     }
 
-    /* Find all pending orders associated with the user, and store them in their account. */
-    pub fn fetch_account_pending_orders(&self, user: &mut UserAccount) {
+    /* Find all pending orders associated with the user, and store them in their account.
+     *
+     * We check only the relevant subset of markets for the given user.
+     *  The markets this user has pending orders in are stored in active_markets:uid in a Redis sorted set.
+     *  The score associated with each market is the number of pending orders currently in the market, once
+     *  a markets score is 0, it's removed from the set. Think Rust Reference Counters.
+     **/
+    pub fn fetch_account_pending_orders(&self, user: &mut UserAccount, redis_conn: &mut redis::Connection) {
         if user.pending_orders.is_complete {
             panic!("Hey coder genius. You're calling fetch_account_pending_orders on an account that is up-to-date.");
         }
 
-        // Check all the markets
-        for (_symbol, market) in self.live_orders.iter() {
-            // Check all the buy orders of this market
-            for buy in market.buy_orders.iter() {
-                if buy.user_id == user.id {
-                    user.pending_orders.insert_order(buy.clone());
-                }
-            }
-            // Check all the sell orders of this market.
-            for sell_container in market.sell_orders.iter() {
-                let sell = &sell_container.0;
+        let response: Result<Vec<String>, RedisError>= redis_conn.zrange(format!["active_markets:{}", user.id.unwrap()], 0, -1);
+        match response {
+            Ok(markets) => {
+                for symbol in &markets {
+                    let market = self.live_orders.get(symbol).unwrap();
 
-                if sell.user_id == user.id {
-                    user.pending_orders.insert_order(sell.clone());
+                    // Check all the buy orders of this market
+                    for buy in market.buy_orders.iter() {
+                        if buy.user_id == user.id {
+                            user.pending_orders.insert_order(buy.clone());
+                        }
+                    }
+
+                    // Check all the sell orders of this market.
+                    for sell_container in market.sell_orders.iter() {
+                        let sell = &sell_container.0;
+
+                        if sell.user_id == user.id {
+                            user.pending_orders.insert_order(sell.clone());
+                        }
+                    }
                 }
+            },
+            Err(e) => {
+                eprintln!("{}", e);
+                panic!("Fix the error in fetch_Account_pending");
             }
         }
         // updates some account state data
@@ -263,6 +283,10 @@ impl Exchange {
 
                     // Add to this accounts pending orders.
                     account.pending_orders.insert_order(order.clone());
+
+                    // Increment this market in recent_markets by 1
+                    let market_diff = account.recent_markets.entry(order.symbol.clone()).or_insert(0);
+                    *market_diff += 1;
                 }
 
                 // Add this new order to the database buffer
@@ -298,6 +322,10 @@ impl Exchange {
                     // Add the symbol name and order to this accounts pending orders.
                     account.pending_orders.insert_order(order.clone());
 
+                    // Increment this market in recent_markets by 1
+                    let market_diff = account.recent_markets.entry(order.symbol.clone()).or_insert(0);
+                    *market_diff += 1;
+
                     // Add this new order to the database buffer
                     buffers.buffered_orders.add_unknown_to_order_buffer(&order);
 
@@ -321,14 +349,14 @@ impl Exchange {
      *       whatever *remains* of an order, i.e any fulfilled portion
      *       cannot be cancelled.
      * */
-    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) -> Result<(), String>{
+    pub fn cancel_order(&mut self, order_to_cancel: &CancelOrder, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client, redis_conn: &mut redis::Connection) -> Result<(), String>{
         if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
 
             // If we don't have the full picture of this users pending orders,
             // get it. This is so we can ensure they don't fill their own order,
             // and accurately represent their account state.
             if !account.pending_orders.is_complete {
-                self.fetch_account_pending_orders(account);
+                self.fetch_account_pending_orders(account, redis_conn);
             }
 
             // 1. Ensure the order belongs to the user
@@ -362,6 +390,10 @@ impl Exchange {
                     // 3. Remove order from users account
                     if let Ok(account) = users.get_mut(&(order_to_cancel.username), true) {
                         account.remove_order_from_account(&(order_to_cancel.symbol), order_to_cancel.order_id);
+
+                        // Decrement this market in recent_markets by 1
+                        let market_diff = account.recent_markets.entry(order_to_cancel.symbol.clone()).or_insert(0);
+                        *market_diff -= 1;
 
                         // Indicate that the user's account has been modified.
                         account.modified = true;
@@ -397,7 +429,7 @@ impl Exchange {
      *      - Maybe simulate individual markets? (This was old behaviour)
      *          - Could be interesting if we want to try some arbitrage algos later?
      **/
-    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
+    pub fn simulate_market(&mut self, sim: &Simulation, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client, redis_conn: &mut redis::Connection) {
 
         // let mut test_client = Client::connect("host=localhost user=postgres dbname=test_db", NoTls).expect("Failed to access test db");
 
@@ -436,6 +468,8 @@ impl Exchange {
             users.new_account(UserAccount::from(name, &"password".to_string()), conn);
         }
 
+        let start = Instant::now();
+        println!("Starting sim timer!");
         // Simulation loop
         for _time_step in 0..sim.duration {
             // We want to randomly decide to buy or sell,
@@ -466,25 +500,25 @@ impl Exchange {
             // Choose the number of shares
             let shares:i32 = random!(2..=13); // TODO: get random number of shares
 
-            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), self, buffers, conn) {
+            if let Ok(mut account) =  users.authenticate(username, &"password".to_string(), conn) {
                 // Create the order and send it to the market
                 let order = Order::from(action.to_string(), symbol.to_string().clone(), shares, new_price, OrderStatus::PENDING, account.id);
 
                 // If we have an incomplete view of this account, get full view.
                 if !account.pending_orders.is_complete {
-                    self.fetch_account_pending_orders(&mut account);
+                    self.fetch_account_pending_orders(&mut account, redis_conn);
                 }
 
-                let (validated, _) = account.validate_order(&order);
-                if validated {
+                if let None = account.validate_order(&order) {
                     if let Err(e) = self.submit_order_to_market(users, buffers, order, username, true, conn) {
                         eprintln!("{}", e);
                     }
                 }
             }
 
-            // buffers.update_buffer_states(&self, &mut test_client);
-            if buffers.update_buffer_states(&self, conn) {
+            buffers.update_buffer_states();
+            // If order buffer was drained, we can reset our cached values modified field.
+            if buffers.transmit_buffer_data(&self) {
                 users.reset_users_modified();
                 // Set all market stats modified to false
                 for (_key, entry) in self.statistics.iter_mut() {
@@ -492,5 +526,6 @@ impl Exchange {
                 }
             }
         }
+        println!("SIMULATION TOOK: {} seconds!", start.elapsed().as_secs());
     }
 }

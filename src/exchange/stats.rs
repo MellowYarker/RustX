@@ -1,7 +1,7 @@
 use crate::exchange::Order;
 use crate::exchange::filled::Trade;
 // Statistics about a security
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SecStat {
     pub symbol: String,
     pub total_buys: i32,
