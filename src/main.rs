@@ -25,7 +25,6 @@ use std::sync::mpsc;
 
 use std::time::Instant;
 
-
 // Helps us determine what each thread will work on.
 pub enum Category {
     InsertNew,
@@ -51,6 +50,9 @@ fn main() {
 
     let mut client = Client::connect("host=localhost user=postgres dbname=rustx", NoTls)
         .expect("Failed to connect to Database. Please ensure it is up and running.");
+
+    let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to open redis");
+    let mut redis_conn = redis_client.get_connection().expect("Failed to connect to redis");
 
     dark_green!("Connected to database.\n");
 
@@ -231,7 +233,7 @@ fn main() {
                     }
 
                     // Our input has been validated. We can now attempt to service the request.
-                    parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+                    parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client, &mut redis_conn);
                 },
                 Err(_) => return
             }
@@ -249,7 +251,7 @@ fn main() {
         }
 
         let exit = Request::ExitReq;
-        parser::service_request(exit, &mut exchange, &mut users, &mut buffers, &mut client);
+        parser::service_request(exit, &mut exchange, &mut users, &mut buffers, &mut client, &mut redis_conn);
     } else {
         // User interface version
         dark_yellow!("
@@ -277,12 +279,12 @@ fn main() {
 
             // If we got an exit request, service it and exit loop.
             if let Request::ExitReq = request {
-                parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+                parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client, &mut redis_conn);
                 break;
             }
 
             // Our input has been validated. We can now attempt to service the request.
-            parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client);
+            parser::service_request(request, &mut exchange, &mut users, &mut buffers, &mut client, &mut redis_conn);
 
             // Make sure our buffer states are accurate.
             buffers.update_buffer_states();

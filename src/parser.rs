@@ -233,7 +233,7 @@ pub fn tokenize_input(text: String) -> Result<Request, ()> {
 }
 
 /* Given a valid Request format, try to execute the Request. */
-pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client) {
+pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Users, buffers: &mut BufferCollection, conn: &mut Client, redis_conn: &mut redis::Connection) {
     match request {
         Request::OrderReq(mut order, username, password) => {
             match &order.action[..] {
@@ -248,7 +248,7 @@ pub fn service_request(request: Request, exchange: &mut Exchange, users: &mut Us
                             // get it. This is so we can ensure they don't fill their own order,
                             // and accurately represent their account state.
                             if !account.pending_orders.is_complete {
-                                exchange.fetch_account_pending_orders(&mut account);
+                                exchange.fetch_account_pending_orders(&mut account, redis_conn);
                             }
 
                             if let Some(obstruction) = account.validate_order(&order) {
@@ -273,7 +273,7 @@ Please change the price of your order so that it cannot fill the following pendi
         Request::CancelReq(order_to_cancel, password) => {
             match users.authenticate(&(order_to_cancel.username), &password, conn) {
                 Ok(_) => {
-                    match exchange.cancel_order(&order_to_cancel, users, buffers, conn) {
+                    match exchange.cancel_order(&order_to_cancel, users, buffers, conn, redis_conn) {
                         Ok(_) => println!("Order successfully cancelled."),
                         Err(e) => eprintln!("{}", e)
                     }
@@ -357,7 +357,7 @@ Please change the price of your order so that it cannot fill the following pendi
             match &req.action[..] {
                 "simulate" => {
                     println!("Simulating {} order(s) in {} market(s) among {} account(s)!", req.duration, req.market_count, req.trader_count);
-                    &exchange.simulate_market(&req, users, buffers, conn);
+                    &exchange.simulate_market(&req, users, buffers, conn, redis_conn);
                 },
                 _ => {
                     eprintln!("I don't know how to handle this Simulation request.");
@@ -376,7 +376,7 @@ Please change the price of your order so that it cannot fill the following pendi
                     match users.authenticate(&account.username, &account.password, conn) {
                         Ok(acc) => {
                             if !acc.pending_orders.is_complete {
-                                exchange.fetch_account_pending_orders(acc);
+                                exchange.fetch_account_pending_orders(acc, redis_conn);
                             }
                             &acc.print_user();
                         },
