@@ -7,8 +7,14 @@ You can read about the technical details near the bottom of the readme, and ther
 You'll need the following software installed on your computer:
 - Cargo
 - Postgresql
+- Redis
+
+I will make a script to set this all up at some point, but for now you have to do it manually, sry my bad.
+### Setting up the Redis Server
+Once Redis has been installed, if you're on linux, just run `sudo systemctl start redis`. 
+
 ### Setting up the Postgres Server
-If you're setting postgres up yourself, follow the script [here](https://www.postgresql.org/docs/current/install-short.html). I will have this autoconfigure at some point in the future, this is just a reference for now.
+If you're setting postgres up yourself, follow the script [here](https://www.postgresql.org/docs/current/install-short.html).
 ```
 ./configure
 make
@@ -67,72 +73,4 @@ In this demo, 3 `buy` orders are placed and subsequently sorted by price, then 4
 
 
 ## Technical Details
-### Changelog
-I've sort of made this into a blog instead of a log, but this is my README so I make the rules.
-#### 6 - Persistence and compromises (consistency vs. latency) [Most Recent].
-For the last month, I've been working on the **[PER](https://github.com/MellowYarker/RustX/projects/2)** project - an effort to integrate postgresql into RustX.
-
-Exchanges are responsible for people's money, so maintaining consistent state is a crucial goal. Without a database, state cannot live beyond the program's termination, making it suspectible to power failures, hardware resource limits, program bugs that may induce `panic!`'s, or operating system errors. With consistencey as the primary goal in mind, I started writing all new orders, trades, users, etc to the database as soon as the exchange processed them. After verifying all the database writes were complete, I did a performance test, and found a big problem.
-
-Computers are much faster than humans. Jeff Atwood [said it pretty nicely](https://blog.codinghorror.com/the-infinite-space-between-words/): "*To computers, we humans work on a completely different time scale, practically geologic time*". However, even some computer operations can take tens, or even hundreds of times longer than other operations, like a clock cycle or an L1 cache reference. One such operation is reading data from disk, the IO bottleneck; a problem that is exacerbated further when you put a RDBMs like Postgres in-between you and your hard drive/SSD. Since disk IO is so costly, the OS will usually buffer writes to disk, unless you [force a flush](https://linux.die.net/man/3/fflush), something my first approach failed to do (*spectacularly*).
-
-Long story short, when you perform incredibly small and frequent writes to your database, a program that frequently **flushes** to disk to ensure durability of data, you make your computer *truly experience geological time*. My previous benchmarks of **millions of orders per second** plummeted to the realm of 10s to 100s of orders per second. This would not cut it, but how can you buffer writes while ensuring consistency is maintained? You make a compromise, and accept eventual consistency.
-
-*Eventual Consistency* - the guarantee that your data will be consistent... eventually. Buffering writes introduces a new class of problems, mostly oriented around managing RAM, avoiding cache invalidation, and ensuring your buffered data actually gets written to disk before something goes wrong. In my case, I chose to buffer three things:
-1. Newly placed orders that the DB has never seen
-2. Updates to orders that the DB knows about
-3. Trades
-
-New orders and trades are unknown to the database, so they must be written in their entirety. Known trades can only change in a few ways (filled count, update time, order status), so they require far less information retention in memory. If an account has been modified such that one of its orders or trades is in a buffer, we **cannot** evict it from the program's cache *until the buffers have been flushed*. If we were to evict such an account, then attempt to modify it in some other way, we would not be able to gather the correct information from the database, as the database lags behind the application (slightly).
-
-Periodically, when we need to evict a user but all of the cached users have been modified since the last write to the database, we will force a flush of the buffers. Additionally, we flush the buffers when they reach a hardcoded capacity (200k elements at time of writing, arbitrarily chosen by me) and on program shutdown. When the buffers are flushed, we modify all our cached users and markets to indicate that they are no longer modified, and so the users can be evicted from cache according to whatever cache policy is in use.
-
-This buffered write approach is a big win for user latency and overall performance, and in the best case (when all the necessary users are cached and they have a perfect view of their orders, + no buffer flush is triggered) program runtime approaches that of the 100% in-memory version from last month. Unfortunately, this implementation really just kicks the can down the road, since we still have to perform the *blocking* DB write, it just happens to occur all at once (i.e it takes a significant amount of time). While certain database tricks like multirow inserts/deletes, batch transactions, HOT updates, and dropping indicies may help, they don't get to the crux of the problem: the fact that the write is a **blocking** operation. Additional performance issues are reading users from the database (one at a time), although I don't know what an accurate distribution of exchange usage by user would look like, so it might not even really be an issue. Either way, it would be easy to solve this problem via Redis.
-
-The most ideal operation would be to have an asynch write to the DB. With the current architecture, we have to wait until the write is complete so that the buffers can be emptied and the caches can be modified. If I were to evict some user from the cache while the DB write occured, I would risk invalidating the cache, then invalidating the user account in a future operation, making the exchange reach an inconsistent (and perhaps irrecoverable) state. The only ways to avoid this are to scale the cache capacity up to a point where we never need to evict a user, or to store all the executed trades in memory. Both of these problems can be solved by using a scalable, in-memory, remote cache like Memcached or Redis; so the next big feature I'll be adding is integrating Redis!
-
-I'll first try to cache executed trades in redis, and perform db writes in a separate thread that can buffer the buffers (i.e ensure that if a buffer was to be flushed at time `A`, and then another at time `B`, and `A` came before `B`, then the buffers will be flushed in the same order). I prefer this approach because it follows **Antirez's [advice](http://oldblog.antirez.com/post/take-advantage-of-redis-adding-it-to-your-stack.html)** of simply adding it to the stack for a new feature, rather than ripping up my architecture to move everything to Redis all at once.
-
----
-#### 5 - Adding Accounts
-The branch **WHY** (as in, *why am I still working on this*), in which I implemented and integrated accounts everywhere, has significantly changed the structure of the program. In fact, the previous performance numbers are more or less irrelevant now, since our simulation has been rewritten.
-
-**Before WHY**:
-We had one account buy shares (in one market) and another account sell shares (in the same market). These two accounts traded with each other *n* times, where *n* was large.
-This was no longer practical after integrating user accounts, since each time a user submits an order, we have to compare that order with all the other orders that user placed in the market to ensure they won't fulfill one of their own pending orders. This is computationally expensive when a user has a lot of orders in one pending market, and I realized that I could either make more program much more complicated, or recognize that the simulation wasn't very realistic.
-
-**New Simulation**:
-We have many accounts both buying and selling in many markets.
-
-Because of this change, we can no longer measure performance in the way we did before, as we now have two independent variables (excluding values determined randomly during sim runtime like price, order type, which account will place an order, the market to operate in, etc).
-
----
-#### 4 - Refactoring
-Managed to nearly 2x bandwidth, we're at *1 million orders in < 7 sec* now, but more on that later.
-
-I split the project up into modules to keep my brain from melting, it turned out to be a good call because I was able to do things less so in a Java way and more so in a Rust way; many thanks to [this reddit thread](https://www.reddit.com/r/rust/comments/5ny09j/tips_to_not_fight_the_borrow_checker/dcf6a59/?context=8&depth=9). Modularizing made moving methods from one struct to another less of a hassle, which made the borrow checker happy. It also made me happy, as I was able to [delete redundant HashMap look-ups](https://github.com/MellowYarker/RustX/pull/2/commits/650bc475bfe6f7e021e55ec266aaf135fa9c8fd5#diff-b87f119a5fecd39dd845d0b76bccdec12291ad21571b3a028007e5ebda2fe5bcR220), pass references rather than copies of data as function args, and use `peek` and `peek_mut` rather than `push` and `pop` for the BinaryHeap.
-
-I noticed something while working on this branch though: assuming a bandwidth of 140k orders per second, it takes around `~7.143μs` to execute 1 order. My i5-chip has a clock-rate of 3.4GHz, that is, it can perform `3400` cycles per μs. Roughly speaking, it takes `7.143 μs/order x 3400 cycles/μs = ~24k cycles/order`. This number seemed extremely high to me, since even an L3-cache reference shouldn't take more than a few hundred cycles. Eventually I realized that I've been compiling in debug mode this entire time. Debug mode doesn't optimize *any part* of the executable (including imported libraries), it also inserts debugging symbols into the executable, making it big and slow. When compiling in *release mode*, 1 million orders were processed in *0.44 sec*, giving a market bandwidth of ~2.72 million orders per second!
-
----
-#### 3 - Binary Heap
-Rather than using vectors which have expensive insertion guarantees, we can use min-max heaps. This way we can still have constant time access to the min/max element, while substantially improving insertion time (thanks Julian!). A million orders takes 13 sec, and this seems to grow linearly with a slope of approximately 1 for the number of orders (i.e *2 million orders = 2 x 1 million = 2 x 13 sec = 26 sec*).
- 
-Only perceivable downside is since we don't maintain a sorted list of orders, the latency for a user increases if there are a lot of orders on the market. This is a bit annoying, since we print the updated market after a user submits a buy/sell, but could be fixed with some caching/diffing of most relevant orders (order price closest to the last traded price).
-
-So linear extrapolation suggests our per market order bandwidth is ~*77k orders/sec*, an important detail, since markets are elements of a HashMap. Since these markets don't communicate with each other, I could swap the HashMap for a concurrent HashMap and bump the 77k up to `77k * (# of cores) * (1 - % of time spent acquiring locks)` to get the total number of orders the exchange can handle each second. I would estimate that number is somewhere around *280k* on my quad core desktop, which is pretty good considering the following 2008 quote about the NASDAQ:
-
->To the extent that the Nasdaq market exists anywhere, it's within a single rack-mounted Dell server in a rented data center somewhere across the Hudson River. That machine routinely processes 70,000 orders, cancelations and trades per second but can handle up to 250,000 per second--enough to deal with trades on the Nasdaq plus the London and Paris stock exchanges with room to spare. - [Forbes](https://www.forbes.com/forbes/2009/0112/056.html?sh=66da69317cc7)
-
-Although to be fair, we don't handle cancellations or or even user accounts, but it's not so bad for an introductory Rust project :)
-
----
-#### 2 - Sort Vec Ascending and Descending
-By sorting the sell orders in descending order, we can pop the lowest offer off the back of the vector instead of removing from the front. This brought the runtime down to ~23 sec for 1 million orders. We still move a lot of data when inserting in a way that maintains order, so there are still gains up for grabs if we use a data structure that has better insertion runtime guarantees.
-
-Below is a flamegraph showing the time spent in each function call (kind of like a graphical version of GProf and Perf). Clearly, a large portion (~60%) of the execution time is spent in `Vec::insert`, so if I do any more work on this, it will be modifying the data structure that market orders are stored in.
-![Flamegraph](./media/performance.png)
-
----
-#### 1 - Baseline
-Basically no effort has gone to performance, but I measured about 1.5 min for 1 million orders (no print statements). I suspect most of the runtime is spent moving elements in the buy/sell vectors, and that using BSTs here would result in far better performance (we insert/remove the front of a large vector *very frequently*).
+See the [change log](https://github.com/MellowYarker/RustX/wiki/Change-Log) in the Wiki for a timeline/blog type vibe
