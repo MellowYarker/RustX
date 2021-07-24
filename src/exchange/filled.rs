@@ -1,5 +1,5 @@
 use crate::exchange::Order;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 
 /* Note that a trade does not indicate a full order was processed!
  * It may have only filled part of an order.
@@ -38,7 +38,7 @@ impl Trade {
     }
 
     /* Used when reading data directly from the database. */
-    pub fn direct(symbol: &str, action: &str, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32, execution_time: DateTime<FixedOffset>) -> Self {
+    pub fn direct(symbol: &str, action: &str, price: f64, filled_oid: i32, filled_uid: i32, filler_oid: i32, filler_uid: i32, exchanged: i32, execution_time: DateTime<Utc>) -> Self {
         Trade {
             symbol: symbol.to_string().clone(),
             action: action.to_string().clone(),
@@ -48,7 +48,7 @@ impl Trade {
             filler_oid,
             filler_uid,
             exchanged,
-            execution_time: execution_time.with_timezone(&Utc)
+            execution_time
         }
     }
 }

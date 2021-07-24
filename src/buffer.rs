@@ -3,7 +3,7 @@ use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::sync::mpsc;
 
-use chrono::{Local, DateTime};
+use chrono::{DateTime, Utc};
 
 use postgres::Client;
 use crate::database;
@@ -45,8 +45,8 @@ pub struct DatabaseReadyOrder {
     pub order_id:     Option<i32>,
     pub status:       Option<OrderStatus>,
     pub user_id:      Option<i32>,
-    pub time_placed:  Option<DateTime<Local>>,
-    pub time_updated: Option<DateTime<Local>>,
+    pub time_placed:  Option<DateTime<Utc>>,
+    pub time_updated: Option<DateTime<Utc>>,
 }
 
 impl DatabaseReadyOrder {
@@ -79,7 +79,7 @@ impl DatabaseReadyOrder {
             order_id: Some(order.order_id),
             status: Some(order.status),
             user_id: order.user_id,
-            time_placed:  Some(Local::now()),
+            time_placed:  Some(Utc::now()),
             time_updated: None,
         }
     }
@@ -98,7 +98,7 @@ impl DatabaseReadyOrder {
             OrderStatus::COMPLETE | OrderStatus::CANCELLED => self.status = Some(order.status)
         }
 
-        self.time_updated = Some(Local::now());
+        self.time_updated = Some(Utc::now());
     }
 }
 

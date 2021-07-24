@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use postgres::Client;
 use crate::database;
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 
 use redis::{Commands, RedisError};
 
@@ -259,28 +259,28 @@ You called validate_order on an account with in-complete pending order data.");
 
         let filler_list = format!["filler:{}", self.id.unwrap()];
         let filled_list = format!["filled:{}", self.id.unwrap()];
+        // We gather trades from both filled, and filler lists.
         let lists = vec![filler_list, filled_list];
         for list in lists {
             let response: Result<Vec<String>, RedisError> = redis_conn.lrange(list, 0, -1);
             match response {
                 Ok(trades) => {
+                    // Redis response is a string.
+                    // We parse it and extract the components.
                     for trade in trades {
                         let mut components = trade.split_whitespace();
-                        let symbol: &str          = components.next().unwrap();
-                        let action: &str          = components.next().unwrap();
-                        let price: f64              = components.next().unwrap().to_string().trim().parse::<f64>().unwrap();
-                        let filled_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
-                        let filled_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
-                        let filler_oid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
-                        let filler_uid: i32         = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
-                        let exchanged: i32          = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
-
-                        let mut naive_time = components.next().unwrap().to_string().replace("_", "T");
-                        naive_time.push_str("+00:00");
-
+                        let symbol: &str    = components.next().unwrap();
+                        let action: &str    = components.next().unwrap();
+                        let price: f64      = components.next().unwrap().to_string().trim().parse::<f64>().unwrap();
+                        let filled_oid: i32 = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filled_uid: i32 = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filler_oid: i32 = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let filler_uid: i32 = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
+                        let exchanged: i32  = components.next().unwrap().to_string().trim().parse::<i32>().unwrap();
                         let execution_time:
-                            DateTime<FixedOffset>   = DateTime::parse_from_rfc3339(&naive_time.as_str()).unwrap();
+                            DateTime<Utc>   = DateTime::parse_from_rfc3339(&components.next().unwrap().to_string().as_str()).unwrap().with_timezone(&Utc);
 
+                        // Build a Trade from the data and add it to the executed_trades.
                         executed_trades.push(Trade::direct(symbol,
                                                            action,
                                                            price,
@@ -289,8 +289,7 @@ You called validate_order on an account with in-complete pending order data.");
                                                            filler_oid,
                                                            filler_uid,
                                                            exchanged,
-                                                           execution_time)
-                                             );
+                                                           execution_time));
                     }
                 },
                 Err(e) => {
@@ -351,8 +350,6 @@ You called validate_order on an account with in-complete pending order data.");
      * We call this when users are evicted from cache,
      * including on program shutdown.
      *
-     * TODO: Replace _ with T, append +00:00 to date, then remove these from deconstruction later.
-     *
      * TODO: Make 2 iterators, one for filled, one for filler,
      *       then batch insert all trades into each list, rather
      *       than do 1 request per trade.
@@ -367,11 +364,15 @@ You called validate_order on an account with in-complete pending order data.");
         // let mut filled_args: Vec<String> = Vec::new();
 
         for trade in filler_trades {
-            let time: String = format!["{}", trade.execution_time];
-            let mut components = time.split_whitespace();
-            let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
-
-            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
+            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol,
+                                                             trade.action,
+                                                             trade.price,
+                                                             trade.filled_oid,
+                                                             trade.filled_uid,
+                                                             trade.filler_oid,
+                                                             trade.filler_uid,
+                                                             trade.exchanged,
+                                                             trade.execution_time.to_rfc3339()];
 
             let filler_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filler:{}", self.id.unwrap()], args);
             if let Err(e) =  filler_response {
@@ -381,10 +382,15 @@ You called validate_order on an account with in-complete pending order data.");
         }
 
         for trade in filled_trades {
-            let time: String = format!["{}", trade.execution_time];
-            let mut components = time.split_whitespace();
-            let time = format!["{}_{}", components.next().unwrap(), components.next().unwrap()];
-            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol, trade.action, trade.price, trade.filled_oid, trade.filled_uid, trade.filler_oid, trade.filler_uid, trade.exchanged, time];
+            let args = format!["{} {} {} {} {} {} {} {} {}", trade.symbol,
+                                                             trade.action,
+                                                             trade.price,
+                                                             trade.filled_oid,
+                                                             trade.filled_uid,
+                                                             trade.filler_oid,
+                                                             trade.filler_uid,
+                                                             trade.exchanged,
+                                                             trade.execution_time.to_rfc3339()];
 
             let filled_response: Result<i32, RedisError> = redis_conn.lpush(&format!["filled:{}", self.id.unwrap()], args);
             if let Err(e) = filled_response {
