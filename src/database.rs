@@ -1,5 +1,5 @@
 use postgres::{Client, NoTls};
-use chrono::{Utc, DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 use std::time::Instant;
 
 use std::collections::BinaryHeap;
@@ -381,8 +381,7 @@ ORDER BY e.execution_time;";
         let filler_uid: i32  = row.get(6);
         let exchanged:  i32  = row.get(7);
         let execution_time:
-            DateTime<FixedOffset>
-                             = row.get(8);
+            DateTime<Utc>    = row.get(8);
 
         // Switch the action because we were the filler.
         if user.id.unwrap() == filler_uid {
@@ -425,8 +424,7 @@ pub fn read_trades(symbol: &String, conn: &mut Client) -> Option<Vec<Trade>> {
         let filler_uid: i32  = row.get(6);
         let exchanged:  i32  = row.get(7);
         let execution_time:
-            DateTime<FixedOffset>
-                             = row.get(8);
+            DateTime<Utc>    = row.get(8);
 
         trades.push(Trade::direct(symbol,
                                   action,
@@ -911,7 +909,7 @@ VALUES ");
                                                                                                trade.filler_oid,
                                                                                                trade.filler_uid,
                                                                                                trade.exchanged,
-                                                                                               trade.execution_time].as_str());
+                                                                                               trade.execution_time.to_rfc3339()].as_str());
         } else {
             // 1. Terminate the current query
             queries[index].pop();
@@ -930,7 +928,7 @@ VALUES ");
                                                                                                trade.filler_oid,
                                                                                                trade.filler_uid,
                                                                                                trade.exchanged,
-                                                                                               trade.execution_time].as_str());
+                                                                                               trade.execution_time.to_rfc3339()].as_str());
         }
         counter += 1;
     }
